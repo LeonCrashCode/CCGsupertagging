@@ -11,15 +11,23 @@ def readfile(filename):
 		while True:
 			line = r.readline().strip()
 			if line == "":
-				break
-			tokens = r.readline().strip().split("\t")
+				if len(words) == 0:
+					break
+				data.append([words, pretrains, postags1, postags2, actions])
+				words = []
+				pretrains = []
+				postags1 = []
+				postags2 = []
+				actions = []
+				continue
+			tokens = line.split("\t")
 			words.append(tokens[0])
 			pretrains.append(tokens[0].lower())
 			postags1.append(tokens[1])
 			postags2.append(tokens[2])
 			actions.append(tokens[3].split())
 
-			data.append([words, pretrains, postags1, postags2, actions])
+			
 	return data
 
 def readpretrain(filename):
@@ -38,7 +46,7 @@ def get_from_ix(w, to_ix, unk):
 
 	assert unk != -1, "no unk supported"
 	return unk
-	
+
 def get_from_ix_list(l, to_ix, unk):
 	re = []
 	for w in l:
@@ -55,11 +63,12 @@ def data2instance(trn_data, ixes):
 		instances.append([])
 		for i in range(len(ixes)):
 			if i == len(ixes) - 1:
-				instances[-1].append(torch.LongTensor([get_from_ix_list(w, ixes[i][0], ixes[i][1]) for w in one[i]]))
+				instances[-1].append([torch.LongTensor(get_from_ix_list(w, ixes[i][0], ixes[i][1])) for w in one[i]])
 			else: 
 				instances[-1].append(torch.LongTensor([get_from_ix(w, ixes[i][0], ixes[i][1]) for w in one[i]]))
 	return instances
 
+"""
 def data2instance_constrains(trn_data, ixes):
 	instances = []
 	for one in trn_data:
@@ -172,3 +181,4 @@ def packed_data_orig(trn_instances, batch_size):
 		packed_instances.append(packed_instance)
 		packed_lengths.append(packed_length)
 	return packed_instances, packed_lengths
+"""

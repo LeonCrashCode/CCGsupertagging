@@ -29,21 +29,21 @@ class EncoderRNN(nn.Module):
         self.pos_embeds = nn.Embedding(pos_size, pos_dim)
         self.dropout = nn.Dropout(self.dropout_p)
 
-        self.embeds2input = nn.Linear(word_dim + pretrain_dim + lemma_dim, input_dim)
+        self.embeds2input = nn.Linear(word_dim + pretrain_dim + pos_dim, input_dim)
         self.tanh = nn.Tanh()
         self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers=self.n_layers, bidirectional=True)
 
     def forward(self, sentence, hidden, train=True):
         word_embedded = self.word_embeds(sentence[0])
         pretrain_embedded = self.pretrain_embeds(sentence[1])
-        lemma_embedded = self.lemma_embeds(sentence[2])
+        pos_embedded = self.pos_embeds(sentence[2])
 
         if train:
             word_embedded = self.dropout(word_embedded)
-            lemma_embedded = self.dropout(lemma_embedded)
+            pos_embedded = self.dropout(pos_embedded)
             self.lstm.dropout = self.dropout_p
 
-        embeds = self.tanh(self.embeds2input(torch.cat((word_embedded, pretrain_embedded, lemma_embedded), 1))).view(len(sentence[0]),1,-1)
+        embeds = self.tanh(self.embeds2input(torch.cat((word_embedded, pretrain_embedded, pos_embedded), 1))).view(len(sentence[0]),1,-1)
         output, hidden = self.lstm(embeds, hidden)
         return output, hidden
 
@@ -95,7 +95,6 @@ class AttnDecoderRNN(nn.Module):
             global_score = self.out(feat_hiddens)
 
             output = F.log_softmax(global_score + (mask_variable - 1) * 1e10)
-
             return output
         else:
             self.lstm.dropout = 0.0
@@ -139,13 +138,13 @@ class AttnDecoderRNN(nn.Module):
                 result.volatile=True
             return result
 
-def train(sentence_variable, target_variable, mask_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, back_prop=True):
+def train(sentence_variable, target_variable, gold_variable, mask_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, back_prop=True):
     encoder_hidden = encoder.initHidden()
 
     encoder_optimizer.zero_grad()
     decoder_optimizer.zero_grad()
 
-    sentence_length = sentence_variable.size(0)
+    sentence_length = sentence_variable[0].size(0)
    
     encoder_output, encoder_hidden = encoder(sentence_variable, encoder_hidden)
 
@@ -154,31 +153,37 @@ def train(sentence_variable, target_variable, mask_variable, encoder, decoder, e
     idx = 0
     loss = 0
     while idx < sentence_length:
-        decoder_input = Variable(torch.LongTensor([decoder.tags_info.tag_to_ix[SOS]]))
+
+        decoder_input = Variable(torch.LongTensor([decoder.tags_info.tag_to_ix[decoder.tags_info.SOS]]))
         if back_prop== False:
             decoder_input.volatile = True
         decoder_input = decoder_input.cuda() if use_cuda else decoder_input
         decoder_input = torch.cat((decoder_input, target_variable[idx]))
 
-        decoder_hidden = (encoder_output[idx].unsqueeze(0), decoder.initC()[1])
+        decoder_hidden = (encoder_output[idx].unsqueeze(0), decoder.initC())
         
         decoder_output = decoder(decoder_input, decoder_hidden, encoder_output, train=True, mask_variable=mask_variable[idx])
 
-        gold_variable = torch.cat((target_variable[idx], Variable(torch.LongTensor([decoder.tags_info.tag_to_ix[EOS]]))))
+        index_variable = torch.cat((gold_variable[idx], Variable(torch.LongTensor([decoder.tags_info.tag_to_ix[decoder.tags_info.EOS]]))))
 
-        gold_variable = gold_variable.cuda() if use_cuda else gold_variable
+        index_variable = index_variable.cuda() if use_cuda else index_variable
+        #print mask_variable[idx]
+        #print decoder_output
+        #print gold_variable
+        #exit(1)
+        tmp_loss = criterion(decoder_output, index_variable)
 
-        loss += criterion(decoder_output, gold_variable)
-
+        loss += tmp_loss.data[0] / decoder_input.size(0)
+        
         idx += 1
 
-  if back_prop == False:
+    if back_prop == False:
         loss.backward()
 
         encoder_optimizer.step()
         decoder_optimizer.step()
     
-    return loss.data[0] / sentence_length 
+    return loss / sentence_length 
 
 def decode(sentence_variable, target_variable, encoder, decoder):
     encoder_hidden = encoder.initHidden()
@@ -221,13 +226,13 @@ def trainIters(trn_instances, dev_instances, encoder, decoder, print_every=100, 
 
     for instance in trn_instances:
         #print "=========="
-        decoder.mask_pool.reset(len(instance[0]))
         token_masks = []
-        for acts in instance[3]:
+        for acts in instance[-1]:
+            #print acts
+            decoder.mask_pool.reset()
             token_masks.append(decoder.mask_pool.get_all_mask(acts))
         masks.append(token_masks)
 
-    #exit(1)
     idx = -1
     iter = 0
     while True:
@@ -237,21 +242,26 @@ def trainIters(trn_instances, dev_instances, encoder, decoder, print_every=100, 
             idx = 0
 
         sentence_variable = []
-        target_variable = [ Variable(torch.LongTensor(x)) for x in trn_instances[idx][3] ]
-        mask_variable = [ Variable(torch.FloatTensor(mask), requires_grad = False) for mask in masks ]
+        target_variable = []
+        mask_variable = []
+        gold_variable = []
 
         if use_cuda:
             sentence_variable.append(Variable(trn_instances[idx][0]).cuda())
             sentence_variable.append(Variable(trn_instances[idx][1]).cuda())
             sentence_variable.append(Variable(trn_instances[idx][2]).cuda())
-            target_variable = target_variable.cuda()
-            mask_variable = mask_variable.cuda()
+            target_variable = [ Variable(torch.LongTensor(x)).cuda() for x in trn_instances[idx][-1] ]
+            gold_variable = [ Variable(torch.LongTensor(x)).cuda() for x in trn_instances[idx][-1] ]
+            mask_variable = [ Variable(torch.FloatTensor(mask), requires_grad = False).cuda() for mask in masks[idx] ]
         else:
             sentence_variable.append(Variable(trn_instances[idx][0]))
             sentence_variable.append(Variable(trn_instances[idx][1]))
-            sentence_variable.append(Variable(trn_instances[idx][2]))        
+            sentence_variable.append(Variable(trn_instances[idx][2]))
+            target_variable = [ Variable(torch.LongTensor(x)) for x in trn_instances[idx][-1] ]
+            gold_variable = [ Variable(torch.LongTensor(x)) for x in trn_instances[idx][-1] ]
+            mask_variable = [ Variable(torch.FloatTensor(mask), requires_grad = False) for mask in masks[idx] ]
 
-        loss = train(sentence_variable, target_variable, mask_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion)
+        loss = train(sentence_variable, target_variable, gold_variable, mask_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion)
         print_loss_total += loss
 
         if iter % print_every == 0:
@@ -266,7 +276,7 @@ def evaluate(instances, encoder, decoder, part):
     out = open("dev_output/"+part,"w")
     for instance in instances:
         sentence_variable = []
-        target_variable = Variable(torch.LongTensor([ x[1] for x in instance[3]]))
+        target_variable = Variable(torch.LongTensor([ x[1] for x in instance[-1]]))
         if use_cuda:
             sentence_variable.append(Variable(instance[0]).cuda())
             sentence_variable.append(Variable(instance[1]).cuda())
@@ -297,30 +307,31 @@ from utils import readpretrain
 from utils import data2instance
 from tag import Tag
 
-trn_file = "train.input"
-dev_file = "dev.input"
-tst_file = "test.input"
+trn_file = "train.actions"
+dev_file = "dev.actions"
+tst_file = "test.actions"
 pretrain_file = "sskip.100.vectors"
 tag_info_file = "tag.info"
-#trn_file = "train.input.part2"
-#dev_file = "dev.input.part"
-#tst_file = "test.input.part"
-#pretrain_file = "sskip.100.vectors.part"
+trn_file = "train.actions.part"
+dev_file = "dev.actions.part"
+tst_file = "test.actions.part"
+pretrain_file = "sskip.100.vectors.part"
 UNK = "<UNK>"
-REDUCE = "reduce"
-COMBINE_F = "/"
-COMBINE_B = "\\"
 
 trn_data = readfile(trn_file)
 word_to_ix = {UNK:0}
-pos_to_ix = {UNK:0}
-for sentence, _, _, postags, actions in trn_data:
+pos1_to_ix = {UNK:0}
+pos2_to_ix = {UNK:0}
+for sentence, _, postags1, postags2, actions in trn_data:
     for word in sentence:
         if word not in word_to_ix:
             word_to_ix[word] = len(word_to_ix)
-    for postag in postags:
-        if postag not in pos_to_ix:
-            pos_to_ix[lemma] = len(pos_to_ix)
+    for postag in postags1:
+        if postag not in pos1_to_ix:
+            pos1_to_ix[postag] = len(pos1_to_ix)
+    for postag in postags2:
+        if postag not in pos2_to_ix:
+            pos2_to_ix[postag] = len(pos2_to_ix)
 
 ##############################################
 ## Tags
@@ -339,7 +350,8 @@ dev_data = readfile(dev_file)
 tst_data = readfile(tst_file)
 
 print "word dict size: ", len(word_to_ix)
-print "lemma dict size: ", len(lemma_to_ix)
+print "pos1 dict size: ", len(pos1_to_ix)
+print "pos2 dict size: ", len(pos2_to_ix)
 print "global tag dict size: ", tags_info.tag_size
 
 WORD_EMBEDDING_DIM = 64
@@ -349,23 +361,22 @@ POS_EMBEDDING_DIM = 32
 TAG_DIM = 128
 INPUT_DIM = 100
 ENCODER_HIDDEN_DIM = 256
-DECODER_INPUT_DIM = 128
-ATTENTION_HIDDEN_DIM = 256
+FEAT_DIM = 128
 
-encoder = Encoder(len(word_to_ix), WORD_EMBEDDING_DIM, len(pretrain_to_ix), PRETRAIN_EMBEDDING_DIM, torch.FloatTensor(pretrain_embeddings), len(pos_to_ix), POS_EMBEDDING_DIM, INPUT_DIM, ENCODER_HIDDEN_DIM, n_layers=2, dropout_p=0.1)
-attn_decoder = AttnDecoderRNN(mask_pool, tags_info, TAG_DIM, DECODER_INPUT_DIM, ENCODER_HIDDEN_DIM, ATTENTION_HIDDEN_DIM, n_layers=1, dropout_p=0.1)
+encoder = EncoderRNN(len(word_to_ix), WORD_EMBEDDING_DIM, len(pretrain_to_ix), PRETRAIN_EMBEDDING_DIM, torch.FloatTensor(pretrain_embeddings), len(pos1_to_ix), POS_EMBEDDING_DIM, INPUT_DIM, ENCODER_HIDDEN_DIM, n_layers=2, dropout_p=0.1)
+attn_decoder = AttnDecoderRNN(mask_pool, tags_info, TAG_DIM, FEAT_DIM, ENCODER_HIDDEN_DIM, n_layers=1, dropout_p=0.1)
 
 ###########################################################
 # prepare training instance
-trn_instances = data2instance(trn_data, [(word_to_ix,0), (pretrain_to_ix,0), (pos_to_ix,0), (tags_info.tag_to_ix,-1)])
+trn_instances = data2instance(trn_data, [(word_to_ix,0), (pretrain_to_ix,0), (pos1_to_ix,0), (pos2_to_ix,0), (tags_info.tag_to_ix,-1)])
 print "trn size: " + str(len(trn_instances))
 ###########################################################
 # prepare development instance
-dev_instances = data2instance(dev_data, [(word_to_ix,0), (pretrain_to_ix,0), (pos_to_ix,0), (tags_info.tag_to_ix,-1)])
+dev_instances = data2instance(dev_data, [(word_to_ix,0), (pretrain_to_ix,0), (pos1_to_ix,0), (pos2_to_ix,0), (tags_info.tag_to_ix,-1)])
 print "dev size: " + str(len(dev_instances))
 ###########################################################
 # prepare test instance
-tst_instances = data2instance(tst_data, [(word_to_ix,0), (pretrain_to_ix,0), (pos_to_ix,0), (tags_info.tag_to_ix,-1)])
+tst_instances = data2instance(tst_data, [(word_to_ix,0), (pretrain_to_ix,0), (pos1_to_ix,0), (pos2_to_ix,0), (tags_info.tag_to_ix,-1)])
 print "tst size: " + str(len(tst_instances))
 
 print "GPU", use_cuda
@@ -373,5 +384,5 @@ if use_cuda:
     encoder = encoder.cuda()
     attn_decoder = attn_decoder.cuda()
 
-trainIters(trn_instances, dev_instances, encoder, attn_decoder, print_every=1000, evaluate_every=50000, learning_rate=0.001)
+trainIters(trn_instances, dev_instances, encoder, attn_decoder, print_every=10, evaluate_every=50000, learning_rate=0.01)
 
