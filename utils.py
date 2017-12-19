@@ -38,6 +38,7 @@ def get_from_ix(w, to_ix, unk):
 
 	assert unk != -1, "no unk supported"
 	return unk
+	
 def get_from_ix_list(l, to_ix, unk):
 	re = []
 	for w in l:

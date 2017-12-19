@@ -11,7 +11,7 @@ import torch.nn.functional as F
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-from mask import StructuredMask
+from mask import SimpleMask
 
 use_cuda = torch.cuda.is_available()
 
@@ -59,11 +59,11 @@ class EncoderRNN(nn.Module):
 
 
 class AttnDecoderRNN(nn.Module):
-    def __init__(self, tag_size, tag_dim, input_dim, feat_dim, encoder_hidden_dim, n_layers=1, dropout_p=0.1):
+    def __init__(self,  mask_pool, tags_info, tag_dim, feat_dim, encoder_hidden_dim, n_layers=1, dropout_p=0.1):
         super(AttnDecoderRNN, self).__init__()
-        self.tag_size = tag_size
+        self.tags_info = tags_info
+        self.mask_pool = mask_pool
         self.tag_dim = tag_dim
-        self.input_dim = input_dim
         self.feat_dim = feat_dim
         self.hidden_dim = encoder_hidden_dim * 2
 
@@ -71,49 +71,43 @@ class AttnDecoderRNN(nn.Module):
         self.dropout_p = dropout_p
 
         self.dropout = nn.Dropout(self.dropout_p)
-        self.tag_embeds = nn.Embedding(self.tags_info.all_tag_size, self.tag_dim)
+        self.tag_embeds = nn.Embedding(self.tags_info.tag_size, self.tag_dim)
 
         self.lstm = nn.LSTM(self.tag_dim, self.hidden_dim, num_layers= self.n_layers)
 
         self.feat = nn.Linear(self.hidden_dim + self.tag_dim, self.feat_dim)
         self.feat_tanh = nn.Tanh()
-        self.out = nn.Linear(self.feat_dim, self.tag_size)
+        self.out = nn.Linear(self.feat_dim, self.tags_info.tag_size)
 
-        self.selective_matrix = Variable(torch.randn(1, self.hidden_dim, self.hidden_dim))
-        if use_cuda:
-            self.selective_matrix = self.selective_matrix.cuda()
-
-    def forward(self, input, hidden, encoder_output, encoder_outputs, mask_variable, train=True):
+    def forward(self, input, hidden, encoder_outputs, mask_variable, train=True):
 
         if train:
             self.lstm.dropout = self.dropout_p
-            embedded = self.action_embeds(input).unsqueeze(1)
+            embedded = self.tag_embeds(input).unsqueeze(1)
             embedded = self.dropout(embedded)
 
             output, hidden = self.lstm(embedded, hidden)
 
-            attn_weights = F.softmax(torch.bmm(output.transpose(0,1), encoder_output.transpose(0,1).transpose(1,2)).view(output.size(0),-1))
-            attn_hiddens = torch.bmm(attn_weights.unsqueeze(0),encoder_output.transpose(0,1))
+            attn_weights = F.softmax(torch.bmm(output.transpose(0,1), encoder_outputs.transpose(0,1).transpose(1,2)).view(output.size(0),-1))
+            attn_hiddens = torch.bmm(attn_weights.unsqueeze(0),encoder_outputs.transpose(0,1))
             feat_hiddens = self.feat_tanh(self.feat(torch.cat((attn_hiddens, embedded.transpose(0,1)), 2).view(output.size(0),-1)))
 
             global_score = self.out(feat_hiddens)
 
-            output = F.log_softmax(total_score + (mask_variable - 1) * 1e10)
+            output = F.log_softmax(global_score + (mask_variable - 1) * 1e10)
 
             return output
         else:
             self.lstm.dropout = 0.0
             tokens = []
-            self.mask_pool.reset(sentence_variable[0].size(0))
+            self.mask_pool.reset()
             while True:
                 mask = self.mask_pool.get_step_mask()
-                mask_variable = Variable(torch.FloatTensor(mask), requires_grad = False).unsqueeze(0)
+                mask_variable = Variable(torch.FloatTensor(mask), requires_grad = False, volatile=True).unsqueeze(0)
                 if use_cuda:
                     mask_variable = mask_variable.cuda()
                 embedded = self.tag_embeds(input).view(1, 1, -1)
                 output, hidden = self.lstm(embedded, hidden)
-
-                selective_score = torch.bmm(torch.bmm(output, self.selective_matrix), encoder_output.transpose(0,1).transpose(1,2)).view(output.size(0), -1)
 
                 attn_weights = F.softmax(torch.bmm(output, encoder_output.transpose(0,1).transpose(1,2)).view(output.size(0), -1))
                 attn_hiddens = torch.bmm(attn_weights.unsqueeze(0), encoder_output.transpose(0, 1))
@@ -121,88 +115,85 @@ class AttnDecoderRNN(nn.Module):
 
                 global_score = self.out(feat_hiddens)
 
-                total_score = torch.cat((global_score, selective_score), 1)
-
-                output = total_score + (mask_variable - 1) * 1e10
+                output = global_scorglobal_scoree + (mask_variable - 1) * 1e10
 
                 _, input = torch.max(output,1)
                 idx = input.view(-1).data.tolist()[0]
 
-                if idx >= tags_info.tag_size:
-                    type = idx - tags_info.tag_size
-                    idx = sentence_variable[2][type].view(-1).data.tolist()[0]
-                    tokens.append([type, idx])
-                    idx += tags_info.tag_size
-                    input = Variable(torch.LongTensor([idx]))
-                    if use_cuda:
-                        input = input.cuda()
-                    self.mask_pool.update(type, idx)
-                else:
-                    tokens.append([-2, idx])
-                    self.mask_pool.update(-2, idx)
+                tokens.append(idx)
+                self.mask_pool.update( idx)
 
                 if idx == tags_info.tag_to_ix[tags_info.EOS]:
                     break
-            return Variable(torch.LongTensor(tokens))
+            return Variable(torch.LongTensor(tokens), volatile=True)
 		
-    def initHidden(self):
+    def initC(self, back_prop=True):
         if use_cuda:
-            result = (Variable(torch.zeros(1, 1, self.hidden_dim)).cuda(),
-                Variable(torch.zeros(1, 1, self.hidden_dim)).cuda())
+            result = Variable(torch.zeros(1, 1, self.hidden_dim)).cuda()
+            if back_prop == False:
+                result.volatile=True
             return result
         else:
-            result = (Variable(torch.zeros(1, 1, self.hidden_dim)),
-                Variable(torch.zeros(1, 1, self.hidden_dim)))
+            result = Variable(torch.zeros(1, 1, self.hidden_dim))
+            if back_prop == False:
+                result.volatile=True
             return result
 
-def train(sentence_variable, target_variable, gold_variable, mask_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion):
+def train(sentence_variable, target_variable, mask_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, back_prop=True):
     encoder_hidden = encoder.initHidden()
 
     encoder_optimizer.zero_grad()
     decoder_optimizer.zero_grad()
 
-    sentence_length = len(sentence_variable[0])
-    target_length = len(target_variable)
+    sentence_length = sentence_variable.size(0)
    
-    loss = 0
-
     encoder_output, encoder_hidden = encoder(sentence_variable, encoder_hidden)
 
-    decoder_input = Variable(torch.LongTensor([decoder.tags_info.tag_to_ix[SOS]]))
-    decoder_input = decoder_input.cuda() if use_cuda else decoder_input
-    decoder_input = torch.cat((decoder_input, target_variable))
+    assert sentence_length == len(target_variable) and sentence_length == len(mask_variable)
+
+    idx = 0
+    loss = 0
+    while idx < sentence_length:
+        decoder_input = Variable(torch.LongTensor([decoder.tags_info.tag_to_ix[SOS]]))
+        if back_prop== False:
+            decoder_input.volatile = True
+        decoder_input = decoder_input.cuda() if use_cuda else decoder_input
+        decoder_input = torch.cat((decoder_input, target_variable[idx]))
+
+        decoder_hidden = (encoder_output[idx].unsqueeze(0), decoder.initC()[1])
+        
+        decoder_output = decoder(decoder_input, decoder_hidden, encoder_output, train=True, mask_variable=mask_variable[idx])
+
+        gold_variable = torch.cat((target_variable[idx], Variable(torch.LongTensor([decoder.tags_info.tag_to_ix[EOS]]))))
+
+        gold_variable = gold_variable.cuda() if use_cuda else gold_variable
+
+        loss += criterion(decoder_output, gold_variable)
+
+        idx += 1
+
+  if back_prop == False:
+        loss.backward()
+
+        encoder_optimizer.step()
+        decoder_optimizer.step()
     
-    #decoder_hidden = decoder.initHidden()
-    decoder_hidden = (torch.cat((encoder_hidden[0][-2], encoder_hidden[0][-1]), 1).unsqueeze(0),torch.cat((encoder_hidden[1][-2], encoder_hidden[1][-1]), 1).unsqueeze(0))
-
-    decoder_output = decoder(sentence_variable, decoder_input, decoder_hidden, encoder_output, train=True, mask_variable=mask_variable) 
-    
-
-    gold_variable = torch.cat((gold_variable, Variable(torch.LongTensor([decoder.tags_info.tag_to_ix[EOS]]))))
-    gold_variable = gold_variable.cuda() if use_cuda else gold_variable
-
-    loss += criterion(decoder_output, gold_variable)
-   
-    loss.backward()
-
-    encoder_optimizer.step()
-    decoder_optimizer.step()
-    
-    return loss.data[0] / target_length
+    return loss.data[0] / sentence_length 
 
 def decode(sentence_variable, target_variable, encoder, decoder):
     encoder_hidden = encoder.initHidden()
-    
+    sentence_length = sentence_variable.size(0)
     encoder_output, encoder_hidden = encoder(sentence_variable, encoder_hidden)
-    
-    decoder_input = Variable(torch.LongTensor([decoder.tags_info.tag_to_ix[SOS]]))
-    decoder_input = decoder_input.cuda() if use_cuda else decoder_input
 
-    decoder_hidden = (torch.cat((encoder_hidden[0][-2], encoder_hidden[0][-1]), 1).unsqueeze(0),torch.cat((encoder_hidden[1][-2], encoder_hidden[1][-1]), 1).unsqueeze(0))
-
-    tokens = decoder(sentence_variable, decoder_input, decoder_hidden, encoder_output, train=False)
-
-    return tokens.view(-1,2).data.tolist()
+    idx = 0
+    tokens = []
+    while idx < sentence_length:
+        decoder_input = Variable(torch.LongTensor([decoder.tags_info.tag_to_ix[SOS]]), volatile=True)
+        decoder_input = decoder_input.cuda() if use_cuda else decoder_input
+        decoder_hidden = (encoder_output[idx].unsqueeze(0), decoder.initC(back_prop=False))
+        tokens.append(decoder(decoder_input, decoder_hidden, encoder_output, train=False))
+        idx += 1
+    return tokens
 
 ######################################################################
 # The whole training process looks like this:
@@ -231,7 +222,11 @@ def trainIters(trn_instances, dev_instances, encoder, decoder, print_every=100, 
     for instance in trn_instances:
         #print "=========="
         decoder.mask_pool.reset(len(instance[0]))
-        masks.append(decoder.mask_pool.get_all_mask(instance[3]))
+        token_masks = []
+        for acts in instance[3]:
+            token_masks.append(decoder.mask_pool.get_all_mask(acts))
+        masks.append(token_masks)
+
     #exit(1)
     idx = -1
     iter = 0
@@ -240,17 +235,10 @@ def trainIters(trn_instances, dev_instances, encoder, decoder, print_every=100, 
         iter += 1
         if idx == len(trn_instances):
             idx = 0
-        sentence_variable = []
-        target_variable = Variable(torch.LongTensor([ x[1] for x in trn_instances[idx][3]]))
-        mask_variable = Variable(torch.FloatTensor(masks[idx]), requires_grad = False)
 
-        gold_list = []
-        for x in trn_instances[idx][3]:
-            if x[0] != -2:
-                gold_list.append(x[0] + decoder.tags_info.tag_size)
-            else:
-                gold_list.append(x[1])
-        gold_variable = Variable(torch.LongTensor(gold_list))
+        sentence_variable = []
+        target_variable = [ Variable(torch.LongTensor(x)) for x in trn_instances[idx][3] ]
+        mask_variable = [ Variable(torch.FloatTensor(mask), requires_grad = False) for mask in masks ]
 
         if use_cuda:
             sentence_variable.append(Variable(trn_instances[idx][0]).cuda())
@@ -263,7 +251,7 @@ def trainIters(trn_instances, dev_instances, encoder, decoder, print_every=100, 
             sentence_variable.append(Variable(trn_instances[idx][1]))
             sentence_variable.append(Variable(trn_instances[idx][2]))        
 
-        loss = train(sentence_variable, target_variable, gold_variable, mask_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion)
+        loss = train(sentence_variable, target_variable, mask_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion)
         print_loss_total += loss
 
         if iter % print_every == 0:
@@ -273,6 +261,7 @@ def trainIters(trn_instances, dev_instances, encoder, decoder, print_every=100, 
 
         if iter % evaluate_every == 0:
             evaluate(dev_instances, encoder, decoder, str(int(iter/evaluate_every)))
+
 def evaluate(instances, encoder, decoder, part):
     out = open("dev_output/"+part,"w")
     for instance in instances:
@@ -306,7 +295,7 @@ def evaluate(instances, encoder, decoder, part):
 from utils import readfile
 from utils import readpretrain
 from utils import data2instance
-#from mask import Mask
+from tag import Tag
 
 trn_file = "train.input"
 dev_file = "dev.input"
@@ -318,11 +307,13 @@ tag_info_file = "tag.info"
 #tst_file = "test.input.part"
 #pretrain_file = "sskip.100.vectors.part"
 UNK = "<UNK>"
+REDUCE = "reduce"
+COMBINE_F = "/"
+COMBINE_B = "\\"
 
 trn_data = readfile(trn_file)
 word_to_ix = {UNK:0}
 pos_to_ix = {UNK:0}
-act_to_ix = {UNK:0}
 for sentence, _, _, postags, actions in trn_data:
     for word in sentence:
         if word not in word_to_ix:
@@ -330,15 +321,12 @@ for sentence, _, _, postags, actions in trn_data:
     for postag in postags:
         if postag not in pos_to_ix:
             pos_to_ix[lemma] = len(pos_to_ix)
-    for action in actions:
-        for act in action:
-            if act in act_to_ix:
-                act_to_ix[act] = len(act_to_ix)
 
 ##############################################
-##
-#mask_info = Mask(tags)
-#############################################
+## Tags
+tags_info = Tag(tag_info_file)
+mask_pool = SimpleMask(tags_info)
+
 pretrain_to_ix = {UNK:0}
 pretrain_embeddings = [ [0. for i in range(100)] ] # for UNK 
 pretrain_data = readpretrain(pretrain_file)
@@ -369,15 +357,15 @@ attn_decoder = AttnDecoderRNN(mask_pool, tags_info, TAG_DIM, DECODER_INPUT_DIM, 
 
 ###########################################################
 # prepare training instance
-trn_instances = data2instance(trn_data, [(word_to_ix,0), (pretrain_to_ix,0), (pos_to_ix,0), (act_to_ix,0)])
+trn_instances = data2instance(trn_data, [(word_to_ix,0), (pretrain_to_ix,0), (pos_to_ix,0), (tags_info.tag_to_ix,-1)])
 print "trn size: " + str(len(trn_instances))
 ###########################################################
 # prepare development instance
-dev_instances = data2instance(dev_data, [(word_to_ix,0), (pretrain_to_ix,0), (pos_to_ix,0), (act_to_ix,0)])
+dev_instances = data2instance(dev_data, [(word_to_ix,0), (pretrain_to_ix,0), (pos_to_ix,0), (tags_info.tag_to_ix,-1)])
 print "dev size: " + str(len(dev_instances))
 ###########################################################
 # prepare test instance
-tst_instances = data2instance(tst_data, [(word_to_ix,0), (pretrain_to_ix,0), (pos_to_ix,0), (act_to_ix,0)])
+tst_instances = data2instance(tst_data, [(word_to_ix,0), (pretrain_to_ix,0), (pos_to_ix,0), (tags_info.tag_to_ix,-1)])
 print "tst size: " + str(len(tst_instances))
 
 print "GPU", use_cuda
