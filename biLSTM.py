@@ -9,11 +9,17 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
-from mask import SimpleMask
-
 use_cuda = torch.cuda.is_available()
+if use_cuda:
+    os.environ["CUDA_VISIBLE_DEVICES"] = sys.argv[1]
+    device = int(sys.argv[1])
+    torch.cuda.manual_seed_all(12345678)
+
+torch.manual_seed(12345678)
+
+dev_out_dir = sys.argv[2]+"_dev/"
+tst_out_dir = sys.argv[2]+"_tst/"
+model_dir = sys.argv[2]+"_model/"
 
 word_to_ix = {UNK:0}
 pos1_to_ix = {UNK:0}
@@ -38,6 +44,7 @@ class EncoderRNN(nn.Module):
         self.embeds2input = nn.Linear(word_dim + pretrain_dim + pos_dim, input_dim)
         self.tanh = nn.Tanh()
         self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers=self.n_layers, bidirectional=True)
+        self.feat = nn.Linear(hidden_dim, len(ix_to_tag))
 
     def forward(self, sentence, hidden, train=True):
         word_embedded = self.word_embeds(sentence[0])
@@ -51,7 +58,8 @@ class EncoderRNN(nn.Module):
 
         embeds = self.tanh(self.embeds2input(torch.cat((word_embedded, pretrain_embedded, pos_embedded), 1))).view(len(sentence[0]),1,-1)
         output, hidden = self.lstm(embeds, hidden)
-        return output, hidden
+        output = output.view(out.size(0),-1)
+        return output
 
     def initHidden(self):
         if use_cuda:
@@ -66,75 +74,25 @@ class EncoderRNN(nn.Module):
 
 def train(sentence_variable, gold_variable, bilstm, bilstm_optimizer, criterion, back_prop=True):
     bilstm_hidden = bilstm.initHidden()
-
     bilstm_optimizer.zero_grad()
-   
     bilstm_output = bilstm(sentence_variable, bilstm_hidden)
-
-    loss = 0
-
-
-    while idx < sentence_length:
-
-        decoder_input = Variable(torch.LongTensor([decoder.tags_info.tag_to_ix[decoder.tags_info.SOS]]))
-        if back_prop== False:
-            decoder_input.volatile = True
-        decoder_input = decoder_input.cuda() if use_cuda else decoder_input
-        decoder_input = torch.cat((decoder_input, target_variable[idx]))
-
-        decoder_hidden = (encoder_output[idx].unsqueeze(0), decoder.initC())
-        
-        decoder_output = decoder(decoder_input, decoder_hidden, encoder_output, train=True, mask_variable=mask_variable[idx])
-
-        index_variable = torch.cat((gold_variable[idx], Variable(torch.LongTensor([decoder.tags_info.tag_to_ix[decoder.tags_info.EOS]]))))
-
-        index_variable = index_variable.cuda() if use_cuda else index_variable
-        #print mask_variable[idx]
-        #print decoder_output
-        #print gold_variable
-        #exit(1)
-        tmp_loss = criterion(decoder_output, index_variable)
-
-        loss += tmp_loss.data[0] / decoder_input.size(0)
-        
-        idx += 1
+    dist = F.log_softmax(self.feat(output),1)
+    loss = criterion(dist, gold_variable)
 
     if back_prop == False:
         loss.backward()
-
         encoder_optimizer.step()
         decoder_optimizer.step()
     
     return loss / sentence_length 
 
-def decode(sentence_variable, target_variable, encoder, decoder):
-    encoder_hidden = encoder.initHidden()
-    sentence_length = sentence_variable.size(0)
-    encoder_output, encoder_hidden = encoder(sentence_variable, encoder_hidden)
+def decode(sentence_variable, bilstm):
+    bilstm_hidden = bilstm.initHidden()
+    bilstm_output = bilstm(sentence_variable, bilstm_hidden)
+    scores, indexs = torch.max(bilstm_output, 1)
+    return indexs.data.tolist()
 
-    idx = 0
-    tokens = []
-    while idx < sentence_length:
-        decoder_input = Variable(torch.LongTensor([decoder.tags_info.tag_to_ix[SOS]]), volatile=True)
-        decoder_input = decoder_input.cuda() if use_cuda else decoder_input
-        decoder_hidden = (encoder_output[idx].unsqueeze(0), decoder.initC(back_prop=False))
-        tokens.append(decoder(decoder_input, decoder_hidden, encoder_output, train=False))
-        idx += 1
-    return tokens
-
-######################################################################
-# The whole training process looks like this:
-#
-# -  Start a timer
-# -  Initialize optimizers and criterion
-# -  Create set of training pairs
-# -  Start empty losses array for plotting
-#
-# Then we call ``train`` many times and occasionally print the progress (%
-# of examples, time so far, estimated time) and average loss.
-#
-
-def trainIters(trn_instances, dev_instances, bilstm, print_every=100, evaluate_every=1000, learning_rate=0.001):
+def trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=100, evaluate_every=1000, learning_rate=0.001):
     print_loss_total = 0  # Reset every print_every
 
     bilstm_optimizer = optim.Adam(filter(lambda p: p.requires_grad, encoder.parameters()), lr=learning_rate, weight_decay=1e-4)
@@ -172,31 +130,26 @@ def trainIters(trn_instances, dev_instances, bilstm, print_every=100, evaluate_e
             print('epoch %.6f : %.10f' % (iter*1.0 / len(trn_instances), print_loss_avg))
 
         if iter % evaluate_every == 0:
-            evaluate(dev_instances, bilstm, str(int(iter/evaluate_every)))
+            evaluate(dev_instances, bilstm, dev_out_dir+str(int(iter/evaluate_every))+".pred")
+            evaluate(tst_instances, bilstm, tst_out_dir+str(int(iter/evaluate_every))+".pred")
 
-def evaluate(instances, encoder, decoder, part):
-    out = open("dev_output/"+part,"w")
+def evaluate(instances, bilstm, dir_path):
+    out = open(dir_path,"w")
     for instance in instances:
         sentence_variable = []
-        target_variable = Variable(torch.LongTensor([ x[1] for x in instance[-1]]))
         if use_cuda:
             sentence_variable.append(Variable(instance[0]).cuda())
             sentence_variable.append(Variable(instance[1]).cuda())
             sentence_variable.append(Variable(instance[2]).cuda())
-            target_variable = target_variable.cuda()
         else:
             sentence_variable.append(Variable(instance[0]))
             sentence_variable.append(Variable(instance[1]))
             sentence_variable.append(Variable(instance[2]))
-        tokens = decode(sentence_variable, target_variable, encoder, decoder)
+        indexs = decode(sentence_variable, bilstm)
 
-	output = []
-        for type, tok in tokens:
-            if type >= 0:
-                output.append(decoder.tags_info.ix_to_lemma[tok])
-            else:
-                output.append(decoder.tags_info.ix_to_tag[tok])
-        out.write(" ".join(output)+"\n")
+        for idx in indexs:
+            out.write(ix_to_tag[idx]+"\n")
+        out.write("\n")
 	out.flush()
     out.close()
 #####################################################################################
@@ -258,7 +211,7 @@ POS_EMBEDDING_DIM = 128
 INPUT_DIM = 256
 ENCODER_HIDDEN_DIM = 512
 
-encoder = EncoderRNN(len(word_to_ix), WORD_EMBEDDING_DIM, len(pretrain_to_ix), PRETRAIN_EMBEDDING_DIM, torch.FloatTensor(pretrain_embeddings), len(pos1_to_ix), POS_EMBEDDING_DIM, INPUT_DIM, ENCODER_HIDDEN_DIM, n_layers=2, dropout_p=0.1)
+bilstm = EncoderRNN(len(word_to_ix), WORD_EMBEDDING_DIM, len(pretrain_to_ix), PRETRAIN_EMBEDDING_DIM, torch.FloatTensor(pretrain_embeddings), len(pos1_to_ix), POS_EMBEDDING_DIM, INPUT_DIM, ENCODER_HIDDEN_DIM, n_layers=2, dropout_p=0.1)
 
 ###########################################################
 # prepare training instance
@@ -275,7 +228,7 @@ print "tst size: " + str(len(tst_instances))
 
 print "GPU", use_cuda
 if use_cuda:
-    encoder = encoder.cuda()
+    bilstm = bilstm.cuda()
 
-trainIters(trn_instances, dev_instances, encoder, print_every=1000, evaluate_every=50000, learning_rate=0.0005)
+trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=1000, evaluate_every=40000, learning_rate=0.0005)
 
