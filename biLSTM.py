@@ -24,6 +24,8 @@ model_dir = sys.argv[2]+"_model/"
 word_to_ix = {UNK:0}
 pos1_to_ix = {UNK:0}
 pos2_to_ix = {UNK:0}
+#tag_to_ix = {UNK:0}
+#ix_to_tag = {UNK}
 tag_to_ix = {UNK:0}
 ix_to_tag = {UNK}
 
@@ -197,7 +199,17 @@ for one in pretrain_data:
 print "pretrain dict size:", len(pretrain_to_ix)
 
 dev_data = readfile(dev_file)
+for _, _, _, _, tags in dev_data:
+    for tag in tags:
+        if tag not in tag_to_ix:
+            tag_to_ix[tag] = len(tag_to_ix)
+            ix_to_tag.append(tag)
 tst_data = readfile(tst_file)
+for _, _, _, _, tags in tst_data:
+    for tag in tags:
+        if tag not in tag_to_ix:
+            tag_to_ix[tag] = len(tag_to_ix)
+            ix_to_tag.append(tag)
 
 print "word dict size: ", len(word_to_ix)
 print "pos1 dict size: ", len(pos1_to_ix)
