@@ -1,7 +1,7 @@
 import sys
 
 L = {}
-for filename in sys.argv[1:]:
+for filename in sys.argv[2:]:
 	for line in open(filename):
 		line = line.strip()
 		if line == "":
@@ -13,5 +13,5 @@ for filename in sys.argv[1:]:
 			L[line] = 1
 
 for key in L.keys():
-	if L[key] >= 1:
+	if L[key] >= int(sys.argv[1]):
 		print key

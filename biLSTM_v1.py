@@ -30,8 +30,9 @@ ix_to_pos2 = [UNK]
 tag_to_ix = {UNK:0}
 ix_to_tag = [UNK]
 
+tag_size = 0
 class EncoderRNN(nn.Module):
-    def __init__(self, word_size, word_dim, pretrain_size, pretrain_dim, pretrain_embeddings, pos_size, pos_dim, input_dim, hidden_dim, n_layers=1, dropout_p=0.0):
+    def __init__(self, word_size, word_dim, pretrain_size, pretrain_dim, pretrain_embeddings, pos_size, pos_dim, input_dim, hidden_dim, feat_dim, n_layers=1, dropout_p=0.0):
         super(EncoderRNN, self).__init__()
         self.n_layers = n_layers
         self.dropout_p = dropout_p
@@ -47,7 +48,8 @@ class EncoderRNN(nn.Module):
         self.embeds2input = nn.Linear(word_dim + pretrain_dim + pos_dim, input_dim)
         self.tanh = nn.Tanh()
         self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers=self.n_layers, bidirectional=True)
-        self.feat = nn.Linear(hidden_dim*2, len(ix_to_tag))
+        self.feat = nn.Linear(hidden_dim*2, feat_dim)
+	self.out = nn.Linear(feat_dim, tag_size)
 
     def forward(self, sentence, hidden, train=True):
         word_embedded = self.word_embeds(sentence[0])
@@ -62,7 +64,7 @@ class EncoderRNN(nn.Module):
         embeds = self.tanh(self.embeds2input(torch.cat((word_embedded, pretrain_embedded, pos_embedded), 1))).view(len(sentence[0]),1,-1)
         output, hidden = self.lstm(embeds, hidden)
         output = output.view(output.size(0),-1)
-        return output
+        return self.tanh(self.feat(output))
 
     def initHidden(self):
         if use_cuda:
@@ -79,7 +81,7 @@ def train(sentence_variable, gold_variable, bilstm, bilstm_optimizer, criterion,
     bilstm_hidden = bilstm.initHidden()
     sentence_length = sentence_variable[0].size(0)
     bilstm_output = bilstm(sentence_variable, bilstm_hidden)
-    dist = F.log_softmax(bilstm.feat(bilstm_output),1)
+    dist = F.log_softmax(bilstm.out(bilstm_output),1)
     loss = criterion(dist, gold_variable)
 
     if back_prop == True:
@@ -92,7 +94,7 @@ def train(sentence_variable, gold_variable, bilstm, bilstm_optimizer, criterion,
 def decode(sentence_variable, bilstm):
     bilstm_hidden = bilstm.initHidden()
     bilstm_output = bilstm(sentence_variable, bilstm_hidden)
-    scores, indexs = torch.max(bilstm.feat(bilstm_output), 1)
+    scores, indexs = torch.max(bilstm.out(bilstm_output), 1)
     return indexs.view(-1).data.tolist()
 
 def trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=100, evaluate_every=1000, learning_rate=0.001):
@@ -133,6 +135,7 @@ def trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=
             print('epoch %.6f : %.10f' % (iter*1.0 / len(trn_instances), print_loss_avg))
 
         if iter % evaluate_every == 0:
+	    """
 	    dev_loss = 0
 	    for instance in dev_instances:
 		#for i in range(len(instance[0])):
@@ -151,10 +154,11 @@ def trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=
 		    dev_sentence_variable.append(Variable(instance[2], volatile=True))
 		    dev_gold_variable = Variable(instance[-1], volatile=True)
 		dev_loss += train(dev_sentence_variable, dev_gold_variable, bilstm, None, criterion, False)
-            dev_acc = evaluate(dev_instances, bilstm, dev_out_dir+str(int(iter/evaluate_every))+".pred")
+            """
+	    dev_acc = evaluate(dev_instances, bilstm, dev_out_dir+str(int(iter/evaluate_every))+".pred")
             tst_acc = evaluate(tst_instances, bilstm, tst_out_dir+str(int(iter/evaluate_every))+".pred")
-	    print('dev %d loss %.10f, dev_acc: %.10f, tst_acc: %.10f' %(int(iter/evaluate_every), dev_loss/len(dev_instances), dev_acc, tst_acc))
-
+	    #print('dev %d loss %.10f, dev_acc: %.10f, tst_acc: %.10f' %(int(iter/evaluate_every), dev_loss/len(dev_instances), dev_acc, tst_acc))
+	    print('dev %d, dev_acc: %.10f, tst_acc: %.10f' %(int(iter/evaluate_every), dev_acc, tst_acc))
 def evaluate(instances, bilstm, dir_path):
     out = open(dir_path,"w")
     correct = 0
@@ -220,6 +224,7 @@ for sentence, _, postags1, postags2, tags in trn_data:
         if tag not in tag_to_ix:
             tag_to_ix[tag] = len(tag_to_ix)
             ix_to_tag.append(tag)
+tag_size = len(tag_to_ix)
 
 pretrain_to_ix = {UNK:0}
 ix_to_pretrain = [UNK]
@@ -255,8 +260,9 @@ POS_EMBEDDING_DIM = 128
 
 INPUT_DIM = 256
 ENCODER_HIDDEN_DIM = 512
+FEAT_DIM = 256
 
-bilstm = EncoderRNN(len(word_to_ix), WORD_EMBEDDING_DIM, len(pretrain_to_ix), PRETRAIN_EMBEDDING_DIM, torch.FloatTensor(pretrain_embeddings), len(pos1_to_ix), POS_EMBEDDING_DIM, INPUT_DIM, ENCODER_HIDDEN_DIM, n_layers=2, dropout_p=0.1)
+bilstm = EncoderRNN(len(word_to_ix), WORD_EMBEDDING_DIM, len(pretrain_to_ix), PRETRAIN_EMBEDDING_DIM, torch.FloatTensor(pretrain_embeddings), len(pos1_to_ix), POS_EMBEDDING_DIM, INPUT_DIM, ENCODER_HIDDEN_DIM, FEAT_DIM, n_layers=2, dropout_p=0.1)
 
 ###########################################################
 # prepare training instance
