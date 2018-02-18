@@ -30,6 +30,8 @@ ix_to_pos2 = [UNK]
 tag_to_ix = {UNK:0}
 ix_to_tag = [UNK]
 
+word_to_cnt = {}
+rare_word_ix = []
 tag_size = 0
 class EncoderRNN(nn.Module):
     def __init__(self, word_size, word_dim, pretrain_size, pretrain_dim, pretrain_embeddings, pos_size, pos_dim, input_dim, hidden_dim, feat_dim, n_layers=1, dropout_p=0.0):
@@ -112,19 +114,26 @@ def trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=
         if idx == len(trn_instances):
             idx = 0
 
+        input_words = []
+        for i in range(len(trn_instances[idx][0])):
+            w = trn_instances[idx][0][i]
+            if w in rare_word_ix and random.uniform(0,1) <= 0.1:
+                input_words.append(trn_instances[idx][1][i])
+            else:
+                input_words.append(w)
+
         sentence_variable = []
         gold_variable = []
-
         if use_cuda:
-            sentence_variable.append(Variable(trn_instances[idx][0]).cuda(device))
-            sentence_variable.append(Variable(trn_instances[idx][1]).cuda(device))
-            sentence_variable.append(Variable(trn_instances[idx][2]).cuda(device))
-            gold_variable = Variable(trn_instances[idx][-1]).cuda(device)
+            sentence_variable.append(Variable(torch.LongTensor(input_words)).cuda(device))
+            sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][2])).cuda(device))
+            sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][3])).cuda(device))
+            gold_variable = Variable(torch.LongTensor(trn_instances[idx][-1])).cuda(device)
         else:
-            sentence_variable.append(Variable(trn_instances[idx][0]))
-            sentence_variable.append(Variable(trn_instances[idx][1]))
-            sentence_variable.append(Variable(trn_instances[idx][2]))
-            gold_variable = Variable(trn_instances[idx][-1])
+            sentence_variable.append(Variable(torch.LongTensor(input_words)))
+            sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][2])))
+            sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][3])))
+            gold_variable = Variable(torch.LongTensor(trn_instances[idx][-1]))
 
         loss = train(sentence_variable, gold_variable, bilstm, bilstm_optimizer, criterion, True)
         print_loss_total += loss
@@ -164,15 +173,23 @@ def evaluate(instances, bilstm, dir_path):
     correct = 0
     total = 0
     for instance in instances:
+        input_words = []
+        for i in range(len(instance[0])):
+            w = instance[0][i]
+            if w == 0:
+                input_words.append(instance[1][i])
+            else:
+                input_words.append(instance[0][i])
+
         sentence_variable = []
         if use_cuda:
-            sentence_variable.append(Variable(instance[0], volatile=True).cuda(device))
-            sentence_variable.append(Variable(instance[1], volatile=True).cuda(device))
-            sentence_variable.append(Variable(instance[2], volatile=True).cuda(device))
+            sentence_variable.append(Variable(torch.LongTensor(input_words), volatile=True).cuda(device))
+            sentence_variable.append(Variable(torch.LongTensor(instance[2]), volatile=True).cuda(device))
+            sentence_variable.append(Variable(torch.LongTensor(instance[3]), volatile=True).cuda(device))
         else:
-            sentence_variable.append(Variable(instance[0], volatile=True))
-            sentence_variable.append(Variable(instance[1], volatile=True))
-            sentence_variable.append(Variable(instance[2], volatile=True))
+            sentence_variable.append(Variable(torch.LongTensor(input_words), volatile=True))
+            sentence_variable.append(Variable(torch.LongTensor(instance[2]), volatile=True))
+            sentence_variable.append(Variable(torch.LongTensor(instance[3]), volatile=True))
         indexs = decode(sentence_variable, bilstm)
 
 	assert len(indexs) == len(instance[-1])
@@ -213,6 +230,12 @@ for sentence, _, postags1, postags2, tags in trn_data:
         if word not in word_to_ix:
             word_to_ix[word] = len(word_to_ix)
 	    ix_to_word.append(word)
+
+        if word not in word_to_cnt:
+            word_to_cnt[word] = 1
+        else:
+            word_to_cnt[word] += 1
+
     for postag in postags1:
         if postag not in pos1_to_ix:
             pos1_to_ix[postag] = len(pos1_to_ix)
@@ -227,6 +250,11 @@ for sentence, _, postags1, postags2, tags in trn_data:
             ix_to_tag.append(tag)
 tag_size = len(tag_to_ix)
 
+###rare_word
+for key in word_to_cnt.keys():
+    if word_to_cnt[key] == 1:
+        rare_word_ix.append(word_to_ix[key])
+###
 pretrain_to_ix = {UNK:0}
 ix_to_pretrain = [UNK]
 pretrain_embeddings = [ [0. for i in range(100)] ] # for UNK 
@@ -273,16 +301,15 @@ bilstm = EncoderRNN(len(word_to_ix), WORD_EMBEDDING_DIM, len(pretrain_to_ix), PR
 
 ###########################################################
 # prepare training instance
-trn_instances = data2instance3(trn_data, [(word_to_ix,0), (pretrain_to_ix,0), (pos1_to_ix,0), (pos2_to_ix,0), (tag_to_ix,0)])
-
+trn_instances = data2instance3(trn_data, [word_to_ix, pretrain_to_ix, pos1_to_ix, pos2_to_ix, tag_to_ix])
 print "trn size: " + str(len(trn_instances))
 ###########################################################
 # prepare development instance
-dev_instances = data2instance3(dev_data, [(word_to_ix,0), (pretrain_to_ix,0), (pos1_to_ix,0), (pos2_to_ix,0), (tag_to_ix,0)])
+dev_instances = data2instance3(dev_data, [word_to_ix, pretrain_to_ix, pos1_to_ix, pos2_to_ix, tag_to_ix])
 print "dev size: " + str(len(dev_instances))
 ###########################################################
 # prepare test instance
-tst_instances = data2instance3(tst_data, [(word_to_ix,0), (pretrain_to_ix,0), (pos1_to_ix,0), (pos2_to_ix,0), (tag_to_ix,0)])
+tst_instances = data2instance3(tst_data, [word_to_ix, pretrain_to_ix, pos1_to_ix, pos2_to_ix, tag_to_ix])
 print "tst size: " + str(len(tst_instances))
 
 print "GPU", use_cuda

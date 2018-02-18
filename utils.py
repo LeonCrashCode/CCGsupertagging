@@ -103,13 +103,20 @@ def data2instance2(trn_data, ixes):
 	return instances
 
 def data2instance3(trn_data, ixes):
-        instances = []
-        for one in trn_data:
-                instances.append([])
-		
-                for i in range(len(ixes)):
-                        instances[-1].append(torch.LongTensor([get_from_ix(w, ixes[i][0], ixes[i][1]) for w in one[i]]))
-        return instances
+	instances = []
+	for one in trn_data:
+		instances.append([])
+		instances[-1].append([get_from_ix(w, ixes[0], 0) for w in one[0]])
+		instances[-1].append([])
+		for w in one[0]:
+			unk = unkized(w)
+			assert unk in ixes[0]
+			instances[-1][-1].append(ixes[0][unk])
+		instances[-1].append([get_from_ix(w, ixes[1], 0) for w in one[1]])
+		instances[-1].append([get_from_ix(w, ixes[2], 0) for w in one[2]])
+		instances[-1].append([get_from_ix(w, ixes[3], 0) for w in one[3]])
+		instances[-1].append([get_from_ix(w, ixes[4], 0) for w in one[4]])
+	return instances
 
 def islower(c):
 	if c >= 'a' and c <= 'z':
@@ -147,7 +154,7 @@ def unkized(w):
 		elif isupper(c)
 			numCaps += 1
 	lower = w.lower()
-	if(isupper(w[0]):
+	if isupper(w[0]):
 		if(numCaps == 1):
 			result = result + "-INITC"
 			if lower in word_to_ix:
