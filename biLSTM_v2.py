@@ -33,6 +33,15 @@ ix_to_tag = [UNK]
 word_to_cnt = {}
 rare_word_ix = []
 tag_size = 0
+
+WORD_EMBEDDING_DIM = 128
+PRETRAIN_EMBEDDING_DIM = 200
+POS_EMBEDDING_DIM = 128
+
+INPUT_DIM = 256
+ENCODER_HIDDEN_DIM = 512
+FEAT_DIM = 256
+
 class EncoderRNN(nn.Module):
     def __init__(self, word_size, word_dim, pretrain_size, pretrain_dim, pretrain_embeddings, pos_size, pos_dim, input_dim, hidden_dim, feat_dim, n_layers=1, dropout_p=0.0):
         super(EncoderRNN, self).__init__()
@@ -219,6 +228,7 @@ trn_file = "train.input"
 dev_file = "dev.input"
 tst_file = "test.input"
 pretrain_file = "sskip.100.vectors"
+pretrain_file = "glove.6B.200d.txt"
 #trn_file = "train.input.part"
 #dev_file = "train.input.part"
 #tst_file = "test.actions.part"
@@ -257,7 +267,7 @@ for key in word_to_cnt.keys():
 ###
 pretrain_to_ix = {UNK:0}
 ix_to_pretrain = [UNK]
-pretrain_embeddings = [ [0. for i in range(100)] ] # for UNK 
+pretrain_embeddings = [ [0. for i in range(PRETRAIN_EMBEDDING_DIM)] ] # for UNK 
 pretrain_data = readpretrain(pretrain_file)
 for one in pretrain_data:
     pretrain_to_ix[one[0]] = len(pretrain_to_ix)
@@ -288,14 +298,6 @@ for item in all_possible_UNK():
 
     word_to_ix[item] = len(word_to_ix)
     ix_to_word.append(item)
-
-WORD_EMBEDDING_DIM = 128
-PRETRAIN_EMBEDDING_DIM = 100
-POS_EMBEDDING_DIM = 128
-
-INPUT_DIM = 256
-ENCODER_HIDDEN_DIM = 512
-FEAT_DIM = 256
 
 bilstm = EncoderRNN(len(word_to_ix), WORD_EMBEDDING_DIM, len(pretrain_to_ix), PRETRAIN_EMBEDDING_DIM, torch.FloatTensor(pretrain_embeddings), len(pos1_to_ix), POS_EMBEDDING_DIM, INPUT_DIM, ENCODER_HIDDEN_DIM, FEAT_DIM, n_layers=2, dropout_p=0.1)
 
