@@ -1,4 +1,10 @@
 # -*- coding: utf-8 -*-
+##
+#   200 glove pretrained
+#   adding windows
+#
+##
+
 import re
 import random
 
@@ -58,7 +64,7 @@ class EncoderRNN(nn.Module):
 
         self.embeds2input = nn.Linear(word_dim + pretrain_dim + pos_dim, input_dim)
         self.tanh = nn.Tanh()
-        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers=self.n_layers, bidirectional=True)
+        self.lstm = nn.LSTM(input_dim*3, hidden_dim, num_layers=self.n_layers, bidirectional=True)
         self.feat = nn.Linear(hidden_dim*2, feat_dim)
 	self.out = nn.Linear(feat_dim, tag_size)
 
@@ -73,7 +79,23 @@ class EncoderRNN(nn.Module):
             self.lstm.dropout = self.dropout_p
 
         embeds = self.tanh(self.embeds2input(torch.cat((word_embedded, pretrain_embedded, pos_embedded), 1))).view(len(sentence[0]),1,-1)
-        output, hidden = self.lstm(embeds, hidden)
+        ##windows
+	begin_padding = self.initPadding()
+	end_padding = self.initPadding()
+	windows = []
+	if len(sentence[0]) == 1:
+	    windows.append(torch.cat((begin_padding[0], embeds[0], end_padding[0]), 1))
+	else:
+	    for i in range(len(sentence[0])):
+	    	if i == 0:
+		    windows.append(torch.cat((begin_padding[0], embeds[i], embeds[i+1]), 1))
+		elif i == len(sentence[0])-1:
+		    windows.append(torch.cat((embeds[i-1], embeds[i], end_padding[0]), 1))
+		else:
+		    windows.append(torch.cat((embeds[i-1], embeds[i], embeds[i+1]), 1))
+	inputs = torch.cat(windows, 0).unsqueeze(1)
+		
+	output, hidden = self.lstm(inputs, hidden)
         output = output.view(output.size(0),-1)
         return self.tanh(self.feat(output))
 
@@ -85,8 +107,14 @@ class EncoderRNN(nn.Module):
         else:
             result = (Variable(torch.zeros(2*self.n_layers, 1, self.hidden_dim)),
                 Variable(torch.zeros(2*self.n_layers, 1, self.hidden_dim)))
-            return result
-
+	    return result
+    def initPadding(self):
+	if use_cuda:
+	    result = Variable(torch.zeros(1, 1, self.input_dim)).cuda(device)
+	    return result
+	else:
+	    result = Variable(torch.zeros(1, 1, self.input_dim))
+	    return result
 
 def train(sentence_variable, gold_variable, bilstm, bilstm_optimizer, criterion, back_prop=True):
     bilstm_hidden = bilstm.initHidden()
@@ -126,7 +154,7 @@ def trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=
         input_words = []
         for i in range(len(trn_instances[idx][0])):
             w = trn_instances[idx][0][i]
-            if w in rare_word_ix and random.uniform(0,1) <= -1:
+            if w in rare_word_ix and random.uniform(0,1) <= 0.1:
                 input_words.append(trn_instances[idx][1][i])
             else:
                 input_words.append(w)
@@ -291,7 +319,7 @@ for _, _, _, _, tags in tst_data:
 print "word dict size: ", len(word_to_ix)
 print "pos1 dict size: ", len(pos1_to_ix)
 print "pos2 dict size: ", len(pos2_to_ix)
-print "tag dict size: ", len(ix_to_tag)
+print "tag dict size: ", tag_size
 
 for item in all_possible_UNK():
     assert item not in word_to_ix

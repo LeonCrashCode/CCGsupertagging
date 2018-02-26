@@ -1,4 +1,11 @@
 # -*- coding: utf-8 -*-
+##
+#   200 glove pretrained
+#   adding windows
+#   re-init parameter
+#   no pos
+##
+
 import re
 import random
 
@@ -9,6 +16,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import sys
 import os
+import math
 use_cuda = torch.cuda.is_available()
 if use_cuda:
     os.environ["CUDA_VISIBLE_DEVICES"] = sys.argv[1]
@@ -56,11 +64,14 @@ class EncoderRNN(nn.Module):
         self.pos_embeds = nn.Embedding(pos_size, pos_dim)
         self.dropout = nn.Dropout(self.dropout_p)
 
-        self.embeds2input = nn.Linear(word_dim + pretrain_dim + pos_dim, input_dim)
-        self.tanh = nn.Tanh()
-        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers=self.n_layers, bidirectional=True)
-        self.feat = nn.Linear(hidden_dim*2, feat_dim)
-	self.out = nn.Linear(feat_dim, tag_size)
+        self.embeds2input = self.linear_init(nn.Linear(word_dim + pretrain_dim, input_dim))
+	self.tanh = nn.Tanh()
+        self.lstm = nn.LSTM(input_dim*3, hidden_dim, num_layers=self.n_layers, bidirectional=True)
+        for name, param in self.lstm.named_parameters():
+	    if "weight" in name:
+	    	tmp = torch.nn.init.orthogonal(param)
+	self.feat = self.linear_init(nn.Linear(hidden_dim*2, feat_dim))
+	self.out = self.linear_init(nn.Linear(feat_dim, tag_size))
 
     def forward(self, sentence, hidden, train=True):
         word_embedded = self.word_embeds(sentence[0])
@@ -72,11 +83,33 @@ class EncoderRNN(nn.Module):
             pos_embedded = self.dropout(pos_embedded)
             self.lstm.dropout = self.dropout_p
 
-        embeds = self.tanh(self.embeds2input(torch.cat((word_embedded, pretrain_embedded, pos_embedded), 1))).view(len(sentence[0]),1,-1)
-        output, hidden = self.lstm(embeds, hidden)
+        embeds = self.tanh(self.embeds2input(torch.cat((word_embedded, pretrain_embedded), 1))).view(len(sentence[0]),1,-1)
+        ##windows
+	begin_padding = self.initPadding()
+	end_padding = self.initPadding()
+	windows = []
+	if len(sentence[0]) == 1:
+	    windows.append(torch.cat((begin_padding[0], embeds[0], end_padding[0]), 1))
+	else:
+	    for i in range(len(sentence[0])):
+	    	if i == 0:
+		    windows.append(torch.cat((begin_padding[0], embeds[i], embeds[i+1]), 1))
+		elif i == len(sentence[0])-1:
+		    windows.append(torch.cat((embeds[i-1], embeds[i], end_padding[0]), 1))
+		else:
+		    windows.append(torch.cat((embeds[i-1], embeds[i], embeds[i+1]), 1))
+	inputs = torch.cat(windows, 0).unsqueeze(1)
+		
+	output, hidden = self.lstm(inputs, hidden)
         output = output.view(output.size(0),-1)
         return self.tanh(self.feat(output))
 
+    def linear_init(self, linear):
+	fan_in, fan_out = torch.nn.init._calculate_fan_in_and_fan_out(linear.weight)
+	linear.weight = torch.nn.Parameter((torch.nn.init.normal(linear.weight, 0, 1.0 / math.sqrt(fan_in))*0.1).data)
+        linear.bias = torch.nn.Parameter((torch.nn.init.normal(linear.bias, 0, 1)*0.1).data)
+	return linear
+	
     def initHidden(self):
         if use_cuda:
             result = (Variable(torch.zeros(2*self.n_layers, 1, self.hidden_dim)).cuda(device),
@@ -85,8 +118,14 @@ class EncoderRNN(nn.Module):
         else:
             result = (Variable(torch.zeros(2*self.n_layers, 1, self.hidden_dim)),
                 Variable(torch.zeros(2*self.n_layers, 1, self.hidden_dim)))
-            return result
-
+	    return result
+    def initPadding(self):
+	if use_cuda:
+	    result = Variable(torch.zeros(1, 1, self.input_dim)).cuda(device)
+	    return result
+	else:
+	    result = Variable(torch.zeros(1, 1, self.input_dim))
+	    return result
 
 def train(sentence_variable, gold_variable, bilstm, bilstm_optimizer, criterion, back_prop=True):
     bilstm_hidden = bilstm.initHidden()
@@ -111,7 +150,8 @@ def decode(sentence_variable, bilstm):
 def trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=100, evaluate_every=1000, learning_rate=0.001):
     print_loss_total = 0  # Reset every print_every
 
-    bilstm_optimizer = optim.Adam(filter(lambda p: p.requires_grad, bilstm.parameters()), lr=learning_rate, weight_decay=1e-4)
+    #bilstm_optimizer = optim.Adam(filter(lambda p: p.requires_grad, bilstm.parameters()), lr=learning_rate, weight_decay=1e-4)
+    bilstm_optimizer = optim.SGD(filter(lambda p: p.requires_grad, bilstm.parameters()), lr=learning_rate)
 
     criterion = nn.NLLLoss()
 
@@ -126,7 +166,7 @@ def trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=
         input_words = []
         for i in range(len(trn_instances[idx][0])):
             w = trn_instances[idx][0][i]
-            if w in rare_word_ix and random.uniform(0,1) <= -1:
+            if w in rare_word_ix and random.uniform(0,1) <= 0.1:
                 input_words.append(trn_instances[idx][1][i])
             else:
                 input_words.append(w)
@@ -291,7 +331,7 @@ for _, _, _, _, tags in tst_data:
 print "word dict size: ", len(word_to_ix)
 print "pos1 dict size: ", len(pos1_to_ix)
 print "pos2 dict size: ", len(pos2_to_ix)
-print "tag dict size: ", len(ix_to_tag)
+print "tag dict size: ", tag_size
 
 for item in all_possible_UNK():
     assert item not in word_to_ix
@@ -318,5 +358,5 @@ print "GPU", use_cuda
 if use_cuda:
     bilstm = bilstm.cuda(device)
 
-trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=1000, evaluate_every=10000, learning_rate=0.0005)
+trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=1000, evaluate_every=10000, learning_rate=0.02)
 

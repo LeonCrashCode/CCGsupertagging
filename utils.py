@@ -109,7 +109,7 @@ def data2instance3(trn_data, ixes):
 		instances[-1].append([get_from_ix(w, ixes[0], 0) for w in one[0]])
 		instances[-1].append([])
 		for w in one[0]:
-			unk = unkized(w)
+			unk = unkized(w, ixes[0])
 			assert unk in ixes[0]
 			instances[-1][-1].append(ixes[0][unk])
 		instances[-1].append([get_from_ix(w, ixes[1], 0) for w in one[1]])
@@ -117,6 +117,30 @@ def data2instance3(trn_data, ixes):
 		instances[-1].append([get_from_ix(w, ixes[3], 0) for w in one[3]])
 		instances[-1].append([get_from_ix(w, ixes[4], 0) for w in one[4]])
 	return instances
+
+def cap(w):
+	if isupper(w[0]):
+		return "CAP"
+	else:
+		return "UCAP"
+def data2instance4(trn_data, ixes):
+        instances = []
+        for one in trn_data:
+                instances.append([])
+                instances[-1].append([get_from_ix(w, ixes[0], 0) for w in one[0]])
+                instances[-1].append([])
+                for w in one[0]:
+                        unk = unkized(w, ixes[0])
+                        assert unk in ixes[0]
+                        instances[-1][-1].append(ixes[0][unk])
+                instances[-1].append([get_from_ix(w, ixes[1], 0) for w in one[1]])
+                instances[-1].append([get_from_ix(w, ixes[2], 0) for w in one[2]])
+                instances[-1].append([get_from_ix(w, ixes[3], 0) for w in one[3]])
+		instances[-1].append([get_from_ix("%5s" % w[0:5], ixes[4], 0) for w in one[0]])
+		instances[-1].append([get_from_ix("%-5s" % w[-5:0], ixes[4], 0) for w in one[0]])
+		instances[-1].append([get_from_ix(cap(w), ixes[5], 0) for w in one[0]])
+                instances[-1].append([get_from_ix(w, ixes[6], 0) for w in one[4]])
+        return instances
 
 def islower(c):
 	if c >= 'a' and c <= 'z':
@@ -137,7 +161,7 @@ def isalpha(c):
 		 return True
 	return False
 
-def unkized(w):
+def unkized(w, word_to_ix):
 	numCaps = 0
 	hasDigit = False
 	hasDash = False
@@ -151,11 +175,11 @@ def unkized(w):
 			hasDash = True
 		elif islower(c):
 			hasLower = True
-		elif isupper(c)
+		elif isupper(c):
 			numCaps += 1
 	lower = w.lower()
 	if isupper(w[0]):
-		if(numCaps == 1):
+		if numCaps == 1:
 			result = result + "-INITC"
 			if lower in word_to_ix:
 				result = result + "-KNOWNLC"
@@ -165,6 +189,7 @@ def unkized(w):
 		result = result + "-CAPS"
 	elif hasLower:
 		result = result + "-LC"
+
 	if hasDigit:
 		result = result + "-NUM"
 	if hasDash:
@@ -174,7 +199,7 @@ def unkized(w):
 		if len(lower) >= 2:
 			ch2 = lower[-2]
 		if ch2 != 's' and ch2 != 'i' and ch2 != 'u':
-			result += result + "-s"
+			result = result + "-s"
 	elif len(lower) >= 5 and hasDash == False and (hasDigit == False or numCaps == 0):
 		ch1 = '0'
 		ch2 = '0'
@@ -221,7 +246,7 @@ def all_possible_UNK():
 		results_two.append(item+"-NUM")
 	for item in results_one:
 		results_three.append(item+"-DASH")
-	for item in result_two:
+	for item in results_two:
 		results_four.append(item+"-DASH")
 
 	results_five = results_one + results_two + results_three + results_four
