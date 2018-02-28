@@ -6,6 +6,7 @@
 #   no pos
 #   capt
 #   char
+#   all digital to 9
 ##
 
 import re
@@ -286,7 +287,7 @@ def evaluate(instances, bilstm, dir_path):
 #####################################################################################
 # main
 
-from utils import readfile2
+from utils import readfile2_num
 from utils import readpretrain
 from utils import data2instance4
 from utils import all_possible_UNK
@@ -301,7 +302,7 @@ pretrain_file = "glove.6B.200d.txt"
 #tst_file = "test.actions.part"
 #pretrain_file = "sskip.100.vectors.part"
 
-trn_data = readfile2(trn_file)
+trn_data = readfile2_num(trn_file)
 for sentence, _, postags1, postags2, tags in trn_data:
     for word in sentence:
         if word not in word_to_ix:
@@ -349,13 +350,13 @@ for one in pretrain_data:
     pretrain_embeddings.append([float(a) for a in one[1:]])
 print "pretrain dict size:", len(pretrain_to_ix)
 
-dev_data = readfile2(dev_file)
+dev_data = readfile2_num(dev_file)
 for _, _, _, _, tags in dev_data:
     for tag in tags:
         if tag not in tag_to_ix:
             tag_to_ix[tag] = len(tag_to_ix)
             ix_to_tag.append(tag)
-tst_data = readfile2(tst_file)
+tst_data = readfile2_num(tst_file)
 for _, _, _, _, tags in tst_data:
     for tag in tags:
         if tag not in tag_to_ix:

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import torch
 def readfile(filename):
+	#action
 	data = []
 	words = []
 	pretrains = []
@@ -29,6 +30,7 @@ def readfile(filename):
 	return data
 
 def readfile2(filename):
+	#tag
 	data = []
 	words = []
 	pretrains = []
@@ -55,6 +57,89 @@ def readfile2(filename):
 			postags2.append(tokens[2])
 			tags.append(tokens[3])
 	return data
+
+def readfile2_num(filename):
+        #tag
+        data = []
+        words = []
+        pretrains = []
+        postags1 = []
+        postags2 = []
+        tags = []
+        with open(filename, "r") as r:
+                while True:
+                        line = r.readline().strip()
+                        if line == "":
+                                if len(words) == 0:
+                                        break
+                                data.append([words, pretrains, postags1, postags2, tags])
+                                words = []
+                                pretrains = []
+                                postags1 = []
+                                postags2 = []
+                                tags = []
+                                continue
+                        tokens = line.split("\t")
+			newtoken = []
+			for w in tokens[0]:
+				if isdigital(w):
+					newtoken.append('9')
+				else:
+					newtoken.append(w)
+                        words.append("".join(newtoken))
+                        pretrains.append(("".join(newtoken)).lower())
+                        postags1.append(tokens[1])
+                        postags2.append(tokens[2])
+                        tags.append(tokens[3])
+        return data
+def tag2seq(tag):
+	seq = []
+	i = 0
+	while i < len(tag):
+		if tag[i] in ["(", ")", "/", "\\"]:
+			seq.append(tag[i])
+			i += 1
+			continue
+		else:
+			j = i
+			while True:
+				if i >= len(tag) or tag[i] in ["(", ")", "/", "\\"]:
+					break
+				i += 1
+			seq.append(tag[j:i])
+			if i < len(tag):
+				seq.append(tag[i])
+	return seq
+
+def readfile3(filename):
+	#sequence
+	data = []
+        words = []
+        pretrains = []
+        postags1 = []
+        postags2 = []
+        tags = []
+        with open(filename, "r") as r:
+                while True:
+                        line = r.readline().strip()
+                        if line == "":
+                                if len(words) == 0:
+                                        break
+                                data.append([words, pretrains, postags1, postags2, tags])
+                                words = []
+                                pretrains = []
+                                postags1 = []
+                                postags2 = []
+                                tags = []
+                                continue
+                        tokens = line.split("\t")
+                        words.append(tokens[0])
+                        pretrains.append(tokens[0].lower())
+                        postags1.append(tokens[1])
+                        postags2.append(tokens[2])
+                        tags.append(tag2seq(tokens[3]))
+        return data
+
 
 def readpretrain(filename):
 	data = []
@@ -140,6 +225,27 @@ def data2instance4(trn_data, ixes):
 		instances[-1].append([get_from_ix("%-5s" % w[-5:0], ixes[4], 0) for w in one[0]])
 		instances[-1].append([get_from_ix(cap(w), ixes[5], 0) for w in one[0]])
                 instances[-1].append([get_from_ix(w, ixes[6], 0) for w in one[4]])
+        return instances
+
+def data2instance5(trn_data, ixes):
+        instances = []
+        for one in trn_data:
+                instances.append([])
+                instances[-1].append([get_from_ix(w, ixes[0], 0) for w in one[0]])
+                instances[-1].append([])
+                for w in one[0]:
+                        unk = unkized(w, ixes[0])
+                        assert unk in ixes[0]
+                        instances[-1][-1].append(ixes[0][unk])
+                instances[-1].append([get_from_ix(w, ixes[1], 0) for w in one[1]])
+                instances[-1].append([get_from_ix(w, ixes[2], 0) for w in one[2]])
+                instances[-1].append([get_from_ix(w, ixes[3], 0) for w in one[3]])
+                instances[-1].append([get_from_ix("%5s" % w[0:5], ixes[4], 0) for w in one[0]])
+                instances[-1].append([get_from_ix("%-5s" % w[-5:0], ixes[4], 0) for w in one[0]])
+                instances[-1].append([get_from_ix(cap(w), ixes[5], 0) for w in one[0]])
+		instances[-1].append([])
+		for w in one[4]:
+			instances[-1][-1].append([get_from_ix(tt, ixes[6], 0) for tt in w])
         return instances
 
 def islower(c):

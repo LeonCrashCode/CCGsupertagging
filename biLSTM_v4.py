@@ -3,9 +3,6 @@
 #   200 glove pretrained
 #   adding windows
 #   re-init parameter
-#   no pos
-#   capt
-#   char
 ##
 
 import re
@@ -39,10 +36,6 @@ pos2_to_ix = {UNK:0}
 ix_to_pos2 = [UNK]
 tag_to_ix = {UNK:0}
 ix_to_tag = [UNK]
-char_to_ix = {UNK:0}
-ix_to_char = [UNK]
-cap_to_ix = {"CAP":1, "UCAP":0}
-ix_to_cap = ["UCAP", "CAP"]
 
 word_to_cnt = {}
 rare_word_ix = []
@@ -51,14 +44,13 @@ tag_size = 0
 WORD_EMBEDDING_DIM = 128
 PRETRAIN_EMBEDDING_DIM = 200
 POS_EMBEDDING_DIM = 128
-CHAR_EMBEDDING_DIM = 32
-CAP_EMBEDDING_DIM = 32
+
 INPUT_DIM = 256
 ENCODER_HIDDEN_DIM = 512
 FEAT_DIM = 256
 
 class EncoderRNN(nn.Module):
-    def __init__(self, word_size, word_dim, pretrain_size, pretrain_dim, pretrain_embeddings, pos_size, pos_dim, char_size, char_dim, cap_size, cap_dim, input_dim, hidden_dim, feat_dim, n_layers=1, dropout_p=0.0):
+    def __init__(self, word_size, word_dim, pretrain_size, pretrain_dim, pretrain_embeddings, pos_size, pos_dim, input_dim, hidden_dim, feat_dim, n_layers=1, dropout_p=0.0):
         super(EncoderRNN, self).__init__()
         self.n_layers = n_layers
         self.dropout_p = dropout_p
@@ -69,12 +61,10 @@ class EncoderRNN(nn.Module):
         self.pretrain_embeds = nn.Embedding(pretrain_size, pretrain_dim)
         self.pretrain_embeds.weight = nn.Parameter(pretrain_embeddings, False)
         self.pos_embeds = nn.Embedding(pos_size, pos_dim)
-        self.char_embeds = nn.Embedding(char_size, char_dim)
-	self.cap_embeds = nn.Embedding(cap_size, cap_dim)
-	self.dropout = nn.Dropout(self.dropout_p)
+        self.dropout = nn.Dropout(self.dropout_p)
 
-        self.embeds2input = self.linear_init(nn.Linear(word_dim + pretrain_dim + char_dim *2 + cap_dim, input_dim))
-	self.tanh = nn.Tanh()
+        self.embeds2input = self.linear_init(nn.Linear(word_dim + pretrain_dim + pos_dim, input_dim))
+        self.tanh = nn.Tanh()
         self.lstm = nn.LSTM(input_dim*3, hidden_dim, num_layers=self.n_layers, bidirectional=True)
         for name, param in self.lstm.named_parameters():
 	    if "weight" in name:
@@ -86,19 +76,13 @@ class EncoderRNN(nn.Module):
         word_embedded = self.word_embeds(sentence[0])
         pretrain_embedded = self.pretrain_embeds(sentence[1])
         pos_embedded = self.pos_embeds(sentence[2])
-	left_char_embedded = self.char_embeds(sentence[3])
-	right_char_embedded = self.char_embeds(sentence[4])
-	cap_embedded = self.cap_embeds(sentence[5])
 
         if train:
             word_embedded = self.dropout(word_embedded)
             pos_embedded = self.dropout(pos_embedded)
-	    left_char_embedded = self.dropout(left_char_embedded)
-	    right_char_embedded = self.dropout(right_char_embedded)
-	    cap_embedded = self.dropout(cap_embedded)
             self.lstm.dropout = self.dropout_p
 
-        embeds = self.tanh(self.embeds2input(torch.cat((word_embedded, pretrain_embedded, left_char_embedded, right_char_embedded, cap_embedded), 1))).view(len(sentence[0]),1,-1)
+        embeds = self.tanh(self.embeds2input(torch.cat((word_embedded, pretrain_embedded, pos_embedded), 1))).view(len(sentence[0]),1,-1)
         ##windows
 	begin_padding = self.initPadding()
 	end_padding = self.initPadding()
@@ -192,17 +176,11 @@ def trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=
             sentence_variable.append(Variable(torch.LongTensor(input_words)).cuda(device))
             sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][2])).cuda(device))
             sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][3])).cuda(device))
-            sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][5])).cuda(device))
-	    sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][6])).cuda(device))
-	    sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][7])).cuda(device))
-	    gold_variable = Variable(torch.LongTensor(trn_instances[idx][-1])).cuda(device)
+            gold_variable = Variable(torch.LongTensor(trn_instances[idx][-1])).cuda(device)
         else:
             sentence_variable.append(Variable(torch.LongTensor(input_words)))
             sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][2])))
             sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][3])))
-	    sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][5])))
-	    sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][6])))
-	    sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][7])))
             gold_variable = Variable(torch.LongTensor(trn_instances[idx][-1]))
 
         loss = train(sentence_variable, gold_variable, bilstm, bilstm_optimizer, criterion, True)
@@ -256,16 +234,10 @@ def evaluate(instances, bilstm, dir_path):
             sentence_variable.append(Variable(torch.LongTensor(input_words), volatile=True).cuda(device))
             sentence_variable.append(Variable(torch.LongTensor(instance[2]), volatile=True).cuda(device))
             sentence_variable.append(Variable(torch.LongTensor(instance[3]), volatile=True).cuda(device))
-            sentence_variable.append(Variable(torch.LongTensor(instance[5]), volatile=True).cuda(device))
-	    sentence_variable.append(Variable(torch.LongTensor(instance[6]), volatile=True).cuda(device))
-	    sentence_variable.append(Variable(torch.LongTensor(instance[7]), volatile=True).cuda(device))
-	else:
+        else:
             sentence_variable.append(Variable(torch.LongTensor(input_words), volatile=True))
             sentence_variable.append(Variable(torch.LongTensor(instance[2]), volatile=True))
             sentence_variable.append(Variable(torch.LongTensor(instance[3]), volatile=True))
-	    sentence_variable.append(Variable(torch.LongTensor(instance[5]), volatile=True))
-	    sentence_variable.append(Variable(torch.LongTensor(instance[6]), volatile=True))
-	    sentence_variable.append(Variable(torch.LongTensor(instance[7]), volatile=True))
         indexs = decode(sentence_variable, bilstm)
 
 	assert len(indexs) == len(instance[-1])
@@ -288,7 +260,7 @@ def evaluate(instances, bilstm, dir_path):
 
 from utils import readfile2
 from utils import readpretrain
-from utils import data2instance4
+from utils import data2instance3
 from utils import all_possible_UNK
 
 trn_file = "train.input"
@@ -307,18 +279,11 @@ for sentence, _, postags1, postags2, tags in trn_data:
         if word not in word_to_ix:
             word_to_ix[word] = len(word_to_ix)
 	    ix_to_word.append(word)
+
         if word not in word_to_cnt:
             word_to_cnt[word] = 1
         else:
             word_to_cnt[word] += 1
-	left = "%5s" % word[0:5]
-	right = "%-5s" % word[-5:]
-	if left not in char_to_ix:
-	    char_to_ix[left] = len(char_to_ix)
-	    ix_to_char.append(left)
-	if right not in char_to_ix:
-	    char_to_ix[right] = len(char_to_ix)
-	    ix_to_char.append(right)
 
     for postag in postags1:
         if postag not in pos1_to_ix:
@@ -373,19 +338,19 @@ for item in all_possible_UNK():
     word_to_ix[item] = len(word_to_ix)
     ix_to_word.append(item)
 
-bilstm = EncoderRNN(len(word_to_ix), WORD_EMBEDDING_DIM, len(pretrain_to_ix), PRETRAIN_EMBEDDING_DIM, torch.FloatTensor(pretrain_embeddings), len(pos1_to_ix), POS_EMBEDDING_DIM, len(char_to_ix), CHAR_EMBEDDING_DIM, len(cap_to_ix), CAP_EMBEDDING_DIM, INPUT_DIM, ENCODER_HIDDEN_DIM, FEAT_DIM, n_layers=2, dropout_p=0.4)
+bilstm = EncoderRNN(len(word_to_ix), WORD_EMBEDDING_DIM, len(pretrain_to_ix), PRETRAIN_EMBEDDING_DIM, torch.FloatTensor(pretrain_embeddings), len(pos1_to_ix), POS_EMBEDDING_DIM, INPUT_DIM, ENCODER_HIDDEN_DIM, FEAT_DIM, n_layers=2, dropout_p=0.1)
 
 ###########################################################
 # prepare training instance
-trn_instances = data2instance4(trn_data, [word_to_ix, pretrain_to_ix, pos1_to_ix, pos2_to_ix, char_to_ix, cap_to_ix, tag_to_ix])
+trn_instances = data2instance3(trn_data, [word_to_ix, pretrain_to_ix, pos1_to_ix, pos2_to_ix, tag_to_ix])
 print "trn size: " + str(len(trn_instances))
 ###########################################################
 # prepare development instance
-dev_instances = data2instance4(dev_data, [word_to_ix, pretrain_to_ix, pos1_to_ix, pos2_to_ix, char_to_ix, cap_to_ix, tag_to_ix])
+dev_instances = data2instance3(dev_data, [word_to_ix, pretrain_to_ix, pos1_to_ix, pos2_to_ix, tag_to_ix])
 print "dev size: " + str(len(dev_instances))
 ###########################################################
 # prepare test instance
-tst_instances = data2instance4(tst_data, [word_to_ix, pretrain_to_ix, pos1_to_ix, pos2_to_ix, char_to_ix, cap_to_ix, tag_to_ix])
+tst_instances = data2instance3(tst_data, [word_to_ix, pretrain_to_ix, pos1_to_ix, pos2_to_ix, tag_to_ix])
 print "tst size: " + str(len(tst_instances))
 
 print "GPU", use_cuda
