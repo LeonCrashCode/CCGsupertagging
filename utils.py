@@ -222,9 +222,9 @@ def data2instance4(trn_data, ixes):
                 instances[-1].append([get_from_ix(w, ixes[2], 0) for w in one[2]])
                 instances[-1].append([get_from_ix(w, ixes[3], 0) for w in one[3]])
 		instances[-1].append([get_from_ix("%5s" % w[0:5], ixes[4], 0) for w in one[0]])
-		instances[-1].append([get_from_ix("%-5s" % w[-5:0], ixes[4], 0) for w in one[0]])
-		instances[-1].append([get_from_ix(cap(w), ixes[5], 0) for w in one[0]])
-                instances[-1].append([get_from_ix(w, ixes[6], 0) for w in one[4]])
+		instances[-1].append([get_from_ix("%-5s" % w[-5:], ixes[5], 0) for w in one[0]])
+		instances[-1].append([get_from_ix(cap(w), ixes[6], 0) for w in one[0]])
+                instances[-1].append([get_from_ix(w, ixes[7], 0) for w in one[4]])
         return instances
 
 def data2instance5(trn_data, ixes):
@@ -241,7 +241,7 @@ def data2instance5(trn_data, ixes):
                 instances[-1].append([get_from_ix(w, ixes[2], 0) for w in one[2]])
                 instances[-1].append([get_from_ix(w, ixes[3], 0) for w in one[3]])
                 instances[-1].append([get_from_ix("%5s" % w[0:5], ixes[4], 0) for w in one[0]])
-                instances[-1].append([get_from_ix("%-5s" % w[-5:0], ixes[4], 0) for w in one[0]])
+                instances[-1].append([get_from_ix("%-5s" % w[-5:], ixes[4], 0) for w in one[0]])
                 instances[-1].append([get_from_ix(cap(w), ixes[5], 0) for w in one[0]])
 		instances[-1].append([])
 		for w in one[4]:

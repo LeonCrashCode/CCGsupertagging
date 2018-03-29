@@ -77,7 +77,7 @@ class EncoderRNN(nn.Module):
 	self.cap_embeds = nn.Embedding(cap_size, cap_dim)
 	self.dropout = nn.Dropout(self.dropout_p)
 
-        self.embeds2input = self.linear_init(nn.Linear(word_dim + pretrain_dim + char_dim *2 + cap_dim, input_dim))
+        self.embeds2input = self.linear_init(nn.Linear(word_dim + pretrain_dim + pos_dim + char_dim *2 + cap_dim, input_dim))
 	self.tanh = nn.Tanh()
         self.lstm = nn.LSTM(input_dim*3, hidden_dim, num_layers=self.n_layers, bidirectional=True)
         for name, param in self.lstm.named_parameters():
@@ -102,7 +102,7 @@ class EncoderRNN(nn.Module):
 	    cap_embedded = self.dropout(cap_embedded)
             self.lstm.dropout = self.dropout_p
 
-        embeds = self.tanh(self.embeds2input(torch.cat((word_embedded, pretrain_embedded, left_char_embedded, right_char_embedded, cap_embedded), 1))).view(len(sentence[0]),1,-1)
+        embeds = self.tanh(self.embeds2input(torch.cat((word_embedded, pretrain_embedded, pos_embedded, left_char_embedded, right_char_embedded, cap_embedded), 1))).view(len(sentence[0]),1,-1)
         ##windows
 	begin_padding = self.initPadding()
 	end_padding = self.initPadding()
