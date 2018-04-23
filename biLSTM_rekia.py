@@ -39,16 +39,16 @@ ix_to_tag = []
 
 WORD_EMBEDDING_DIM = 300
 CAP_EMBEDDING_DIM = 5
-SUFFIX_EMBEDDIN_DIM = 5
+SUFFIX_EMBEDDING_DIM = 5
 
 
-INPUT_DIM = WORD_EMBEDDING_DIM + CAP_EMBEDDING_DIM + SUFFIX_EMBEDDIN_DIM
+INPUT_DIM = WORD_EMBEDDING_DIM + CAP_EMBEDDING_DIM + SUFFIX_EMBEDDING_DIM
 HIDDEN_DIM = 400
 DROPOUT_P = 0.5
 LEARNING_RATE = 0.001
 
 class EncoderRNN(nn.Module):
-    def __init__(self, word_size, word_dim, cap_size, cap_dim, suffix_size, suffix_dim, input_dim, hidden_dim, n_layers=2, dropout_p=0.5):
+    def __init__(self, word_size, word_dim, pretrains, cap_size, cap_dim, suffix_size, suffix_dim, tag_size, input_dim, hidden_dim, n_layers=2, dropout_p=0.5):
         super(EncoderRNN, self).__init__()
         self.n_layers = n_layers
         self.dropout_p = dropout_p
@@ -56,7 +56,8 @@ class EncoderRNN(nn.Module):
         self.hidden_dim = hidden_dim
 
         self.word_embeds = nn.Embedding(word_size, word_dim)
-        self.cap_embeds = nn.Embedding(cap_size, cap_dim)
+        self.word_embeds.weight = nn.Parameter(pretrains, True)
+	self.cap_embeds = nn.Embedding(cap_size, cap_dim)
         self.suffix_embeds = nn.Embedding(suffix_size, suffix_dim)
         self.dropout = nn.Dropout(self.dropout_p)
 
@@ -64,9 +65,8 @@ class EncoderRNN(nn.Module):
         for name, param in self.lstm.named_parameters():
             if "weight" in name:
                 tmp = torch.nn.init.orthogonal(param)
-
+	self.bi2one = self.linear_init(nn.Linear(hidden_dim*2, hidden_dim))
         self.out = self.linear_init(nn.Linear(hidden_dim, tag_size))
-
     def forward(self, sentence, hidden, train=True):
         word_embedded = self.word_embeds(sentence[0])
         cap_embedded = self.cap_embeds(sentence[1])
@@ -78,9 +78,10 @@ class EncoderRNN(nn.Module):
             suffix_embedded = self.dropout(suffix_embedded)
             self.lstm.dropout = self.dropout_p
 
-        embeds = torch.cat((word_embedded, pretrain_embedded, pos_embedded), 1).view(sentence[0])
+        embeds = torch.cat((word_embedded, cap_embedded, suffix_embedded), 1).unsqueeze(1)
         output, hidden = self.lstm(embeds, hidden)
-        return self.out(output)
+        output = self.bi2one(output)
+	return self.out(output)
 
     def linear_init(self, linear):
         fan_in, fan_out = torch.nn.init._calculate_fan_in_and_fan_out(linear.weight)
@@ -101,7 +102,7 @@ class EncoderRNN(nn.Module):
 def train(sentence_variable, gold_variable, bilstm, bilstm_optimizer, criterion, back_prop=True):
     bilstm_hidden = bilstm.initHidden()
     sentence_length = sentence_variable[0].size(0)
-    bilstm_output = bilstm(sentence_variable, bilstm_hidden)
+    bilstm_output = bilstm(sentence_variable, bilstm_hidden).view(sentence_length, -1)
     dist = F.log_softmax(bilstm_output,1)
     loss = criterion(dist, gold_variable)
 
@@ -114,7 +115,7 @@ def train(sentence_variable, gold_variable, bilstm, bilstm_optimizer, criterion,
 
 def decode(sentence_variable, bilstm):
     bilstm_hidden = bilstm.initHidden()
-    bilstm_output = bilstm(sentence_variable, bilstm_hidden)
+    bilstm_output = bilstm(sentence_variable, bilstm_hidden).view(sentence_variable[0].size(0), -1)
     scores, indexs = torch.max(bilstm_output, 1)
     return indexs.view(-1).data.tolist()
 
@@ -133,14 +134,6 @@ def trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=
         iter += 1
         if idx == len(trn_instances):
             idx = 0
-
-        input_words = []
-        for i in range(len(trn_instances[idx][0])):
-            w = trn_instances[idx][0][i]
-            if w in rare_word_ix and random.uniform(0,1) <= 0.1:
-                input_words.append(trn_instances[idx][1][i])
-            else:
-                input_words.append(w)
 
         sentence_variable = []
         gold_variable = []
@@ -202,18 +195,17 @@ def evaluate(instances, bilstm, dir_path):
 
 from utils import readfile_rekia
 from utils import readpretrain
-from utils import data2instance3
+from utils import data2instance2
 #from utils import all_possible_UNK
 
 trn_file = "train.input"
 dev_file = "dev.input"
 tst_file = "test.input"
-pretrain_file = "sskip.100.vectors"
 pretrain_file = "glove.6B.300d.txt"
-#trn_file = "train.input.part"
-#dev_file = "train.input.part"
-#tst_file = "test.actions.part"
-#pretrain_file = "sskip.100.vectors.part"
+trn_file = "train.input.part"
+dev_file = "dev.input.part"
+tst_file = "test.input.part"
+pretrain_file = "glove.6B.300d.txt.part"
 
 pretrain_embeddings = [ [0. for i in range(WORD_EMBEDDING_DIM)] ] # for UNK
 unk_embeddings = [ 0. for i in range(WORD_EMBEDDING_DIM)]
@@ -227,9 +219,9 @@ for one in pretrain_data:
 for i in range(WORD_EMBEDDING_DIM):
     unk_embeddings[i] /= len(pretrain_embeddings) - 1
 pretrain_embeddings[0] = unk_embeddings
-print "pretrain dict size:", len(pretrain_to_ix)
+print "word dict size:", len(word_to_ix)
 
-trn_data = readfile3(trn_file)
+trn_data = readfile_rekia(trn_file)
 for _, _, suffixs, tags in trn_data:
     for suffix in suffixs:
         if suffix not in suffix_to_ix:
@@ -240,25 +232,24 @@ for _, _, suffixs, tags in trn_data:
             tag_to_ix[tag] = len(tag_to_ix)
             ix_to_tag.append(tag)
 
-dev_data = readfile3(dev_file)
+dev_data = readfile_rekia(dev_file)
 for _, _, _, tags in dev_data:
     for tag in tags:
         if tag not in tag_to_ix:
             tag_to_ix[tag] = len(tag_to_ix)
             ix_to_tag.append(tag)
-tst_data = readfile3(tst_file)
+tst_data = readfile_rekia(tst_file)
 for _, _, _, tags in tst_data:
     for tag in tags:
         if tag not in tag_to_ix:
             tag_to_ix[tag] = len(tag_to_ix)
             ix_to_tag.append(tag)
 
-print "word dict size: ", len(word_to_ix)
 print "cap dict size: ", len(cap_to_ix)
 print "suffix dict size: ", len(suffix_to_ix)
 print "tag dict size: ", len(tag_to_ix)
 
-bilstm = EncoderRNN(len(word_to_ix), WORD_EMBEDDING_DIM, torch.FloatTensor(pretrain_embeddings), len(cap_to_ix), CAP_EMBEDDING_DIM, len(suffix_to_ix), SUFFIX_EMBEDDING_DIM, INPUT_DIM, HIDDEN_DIM, n_layers=2, dropout_p=DROPOUT_P)
+bilstm = EncoderRNN(len(word_to_ix), WORD_EMBEDDING_DIM, torch.FloatTensor(pretrain_embeddings), len(cap_to_ix), CAP_EMBEDDING_DIM, len(suffix_to_ix), SUFFIX_EMBEDDING_DIM, len(tag_to_ix), INPUT_DIM, HIDDEN_DIM, n_layers=2, dropout_p=DROPOUT_P)
 
 ###########################################################
 # prepare training instance
@@ -324,5 +315,5 @@ print "GPU", use_cuda
 if use_cuda:
     bilstm = bilstm.cuda()
 
-trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=1000, evaluate_every=10000, learning_rate=LEARNING_RATE)
+trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=10, evaluate_every=10, learning_rate=LEARNING_RATE)
 

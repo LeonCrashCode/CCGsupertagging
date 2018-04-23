@@ -62,9 +62,13 @@ def simplify(tok):
 	tok = tok.lower()
 	tok = tok.strip("/").split("/")[-1]
 	tok = tok.strip("\\").split("\\")[-1]
+	new_tok = []
 	for i in range(len(tok)):
 		if isdigital(tok[i]):
-			tok[i] = '0'
+			new_tok.append("0")
+		else:
+			new_tok.append(tok[i])
+	tok = "".join(new_tok)
 	if tok != "" and tok.strip("0") == "":
 		tok = "0"
 	return tok
