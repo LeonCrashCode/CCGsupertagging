@@ -58,6 +58,48 @@ def readfile2(filename):
 			tags.append(tokens[3])
 	return data
 
+def simplify(tok):
+	tok = tok.lower()
+	for i in range(len(tok))
+		if isdigital(tok[i]):
+			tok[i] = '0'
+	tok = tok.strip("/").split("/")[-1]
+	tok = tok.strip("\\").split("\\")[-1]
+
+	if tok != "" and tok.strip("0") == "":
+		tok = "0"
+	return tok
+def readfile3(filename):
+	data = []
+	words = []
+	caps = []
+	suffixs = []
+	tags = []
+	with open(filename, "r") as r:
+		while True:
+			line = r.readline().strip()
+			if line == "":
+				if len(words) == 0:
+					break
+				data.append([words, caps, suffixs, tags])
+				words = []
+				caps = []
+				suffixs = []
+				tags = []
+				continue
+
+			tokens = line.split("\t")
+			words.append(simplify(tokens[0]))
+			caps.append(cap(tokens[0]))
+			suffix = ""
+			if len(tokens[0]) == 1:
+				suffix = "#"+tokens[0]
+			else:
+				suffix = tokens[0][-2:]
+			suffixs.append(suffix)
+			tags.append(tokens[-1])
+	return data
+
 def readfile2_num(filename):
         #tag
         data = []
@@ -247,6 +289,7 @@ def data2instance5(trn_data, ixes):
 		for w in one[4]:
 			instances[-1][-1].append([get_from_ix(tt, ixes[6], 0) for tt in w])
         return instances
+
 
 def islower(c):
 	if c >= 'a' and c <= 'z':
