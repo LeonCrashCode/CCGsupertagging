@@ -192,7 +192,7 @@ def evaluate(instances, bilstm, dir_path):
             i += 1
     total += len(indexs)
     out.write("\n")
-	out.flush()
+    out.flush()
     out.close()
     return correct * 1.0 /total
 #####################################################################################
@@ -200,17 +200,16 @@ def evaluate(instances, bilstm, dir_path):
 #####################################################################################
 # main
 
-from utils import readfile3
+from utils import readfile_rekia
 from utils import readpretrain
 from utils import data2instance3
-from utils import all_possible_UNK
+#from utils import all_possible_UNK
 
 trn_file = "train.input"
 dev_file = "dev.input"
 tst_file = "test.input"
 pretrain_file = "sskip.100.vectors"
-pretrain_file = "glove.6B.200d.txt"
-pretrain_file = ""
+pretrain_file = "glove.6B.300d.txt"
 #trn_file = "train.input.part"
 #dev_file = "train.input.part"
 #tst_file = "test.actions.part"
@@ -263,20 +262,67 @@ bilstm = EncoderRNN(len(word_to_ix), WORD_EMBEDDING_DIM, torch.FloatTensor(pretr
 
 ###########################################################
 # prepare training instance
-trn_instances = data2instance2(trn_data, [(word_to_ix,0), (cap_to_ix,-1), (suffix_to_ix,0), (tag_to_ix,-1)])
+trn_instances, unks, total_ws = data2instance2(trn_data, [(word_to_ix,0), (cap_to_ix,-1), (suffix_to_ix,0), (tag_to_ix,-1)])
 print "trn size: " + str(len(trn_instances))
+print "word unk:",
+print unks[0],
+print total_ws[0],
+print unks[0]*1.0 / total_ws[0]
+print "cap unk:",
+print unks[1],
+print total_ws[1],
+print unks[1]*1.0 / total_ws[1]
+print "suffix unk:",
+print unks[2],
+print total_ws[2],
+print unks[2]*1.0 / total_ws[2]
+print "tag unk:",
+print unks[3],
+print total_ws[3],
+print unks[3]*1.0 / total_ws[3]
 ###########################################################
 # prepare development instance
-dev_instances = data2instance2(dev_data, [(word_to_ix,0), (cap_to_ix,-1), (suffix_to_ix,0), (tag_to_ix,-1)])
+dev_instances, unks, total_ws = data2instance2(dev_data, [(word_to_ix,0), (cap_to_ix,-1), (suffix_to_ix,0), (tag_to_ix,-1)])
 print "dev size: " + str(len(dev_instances))
+print "word unk:",
+print unks[0],
+print total_ws[0],
+print unks[0]*1.0 / total_ws[0]
+print "cap unk:",
+print unks[1],
+print total_ws[1],
+print unks[1]*1.0 / total_ws[1]
+print "suffix unk:",
+print unks[2],
+print total_ws[2],
+print unks[2]*1.0 / total_ws[2]
+print "tag unk:",
+print unks[3],
+print total_ws[3],
+print unks[3]*1.0 / total_ws[3]
 ###########################################################
 # prepare test instance
-tst_instances = data2instance2(tst_data, [(word_to_ix,0), (cap_to_ix,-1), (suffix_to_ix,0), (tag_to_ix,-1)])
+tst_instances, unks, total_ws = data2instance2(tst_data, [(word_to_ix,0), (cap_to_ix,-1), (suffix_to_ix,0), (tag_to_ix,-1)])
 print "tst size: " + str(len(tst_instances))
-
+print "word unk:",
+print unks[0],
+print total_ws[0],
+print unks[0]*1.0 / total_ws[0]
+print "cap unk:",
+print unks[1],
+print total_ws[1],
+print unks[1]*1.0 / total_ws[1]
+print "suffix unk:",
+print unks[2],
+print total_ws[2],
+print unks[2]*1.0 / total_ws[2]
+print "tag unk:",
+print unks[3],
+print total_ws[3],
+print unks[3]*1.0 / total_ws[3]
 print "GPU", use_cuda
 if use_cuda:
-    bilstm = bilstm.cuda(device)
+    bilstm = bilstm.cuda()
 
 trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=1000, evaluate_every=10000, learning_rate=LEARNING_RATE)
 

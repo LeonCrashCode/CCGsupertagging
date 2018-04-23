@@ -60,16 +60,15 @@ def readfile2(filename):
 
 def simplify(tok):
 	tok = tok.lower()
-	for i in range(len(tok))
-		if isdigital(tok[i]):
-			tok[i] = '0'
 	tok = tok.strip("/").split("/")[-1]
 	tok = tok.strip("\\").split("\\")[-1]
-
+	for i in range(len(tok)):
+		if isdigital(tok[i]):
+			tok[i] = '0'
 	if tok != "" and tok.strip("0") == "":
 		tok = "0"
 	return tok
-def readfile3(filename):
+def readfile_rekia(filename):
 	data = []
 	words = []
 	caps = []
@@ -223,11 +222,22 @@ def data2instance(trn_data, ixes):
 
 def data2instance2(trn_data, ixes):
 	instances = []
+	unks = [ 0 for i in range(len(ixes))]
+	total_w = [ 0 for i in range(len(ixes))]
 	for one in trn_data:
 		instances.append([])
 		for i in range(len(ixes)):
-			instances[-1].append(torch.LongTensor([get_from_ix(w, ixes[i][0], ixes[i][1]) for w in one[i]]))
-	return instances
+			tmp = []
+			for w in one[i]:
+				if w in ixes[i][0]:
+					tmp.append(ixes[i][0][w])
+				else:
+					assert ixes[i][1] != -1
+					tmp.append(ixes[i][1])
+					unks[i] += 1
+			total_w[i] += len(one[i])
+			instances[-1].append(torch.LongTensor(tmp))
+	return instances, unks, total_w
 
 def data2instance3(trn_data, ixes):
 	instances = []

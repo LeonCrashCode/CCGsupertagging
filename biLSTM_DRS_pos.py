@@ -3,7 +3,6 @@
 #   200 glove pretrained
 #   adding windows
 #   re-init parameter
-#   no pos
 #   capt
 #   char
 #   all digital to 9
@@ -59,7 +58,7 @@ ENCODER_HIDDEN_DIM = 512
 FEAT_DIM = 256
 
 class EncoderRNN(nn.Module):
-    def __init__(self, word_size, word_dim, pretrain_size, pretrain_dim, pretrain_embeddings, pos_size, pos_dim, lchar_size, rchar_size, char_dim, cap_size, cap_dim, input_dim, hidden_dim, feat_dim, n_layers=1, dropout_p=0.0):
+    def __init__(self, word_size, word_dim, pretrain_size, pretrain_dim, pretrain_embeddings, pos_size, pos2_size, pos_dim, lchar_size, rchar_size, char_dim, cap_size, cap_dim, input_dim, hidden_dim, feat_dim, n_layers=1, dropout_p=0.0):
         super(EncoderRNN, self).__init__()
         self.n_layers = n_layers
         self.dropout_p = dropout_p
@@ -70,12 +69,13 @@ class EncoderRNN(nn.Module):
         self.pretrain_embeds = nn.Embedding(pretrain_size, pretrain_dim)
         self.pretrain_embeds.weight = nn.Parameter(pretrain_embeddings, False)
         self.pos_embeds = nn.Embedding(pos_size, pos_dim)
+	self.pos2_embeds = nn.Embedding(pos2_size, pos_dim)
         self.lchar_embeds = nn.Embedding(lchar_size, char_dim)
 	self.rchar_embeds = nn.Embedding(rchar_size, char_dim)
 	self.cap_embeds = nn.Embedding(cap_size, cap_dim)
 	self.dropout = nn.Dropout(self.dropout_p)
 
-        self.embeds2input = self.linear_init(nn.Linear(word_dim + pretrain_dim + pos_dim + char_dim *2 + cap_dim, input_dim))
+        self.embeds2input = self.linear_init(nn.Linear(word_dim + pretrain_dim + pos_dim + pos_dim + char_dim *2 + cap_dim, input_dim))
 	self.tanh = nn.Tanh()
         self.lstm = nn.LSTM(input_dim*3, hidden_dim, num_layers=self.n_layers, bidirectional=True)
         for name, param in self.lstm.named_parameters():
@@ -88,19 +88,21 @@ class EncoderRNN(nn.Module):
         word_embedded = self.word_embeds(sentence[0])
         pretrain_embedded = self.pretrain_embeds(sentence[1])
         pos_embedded = self.pos_embeds(sentence[2])
-	left_char_embedded = self.lchar_embeds(sentence[3])
-	right_char_embedded = self.rchar_embeds(sentence[4])
-	cap_embedded = self.cap_embeds(sentence[5])
+	pos2_embedded = self.pos2_embeds(sentence[3])
+	left_char_embedded = self.lchar_embeds(sentence[4])
+	right_char_embedded = self.rchar_embeds(sentence[5])
+	cap_embedded = self.cap_embeds(sentence[6])
 
         if train:
             word_embedded = self.dropout(word_embedded)
             pos_embedded = self.dropout(pos_embedded)
+	    pos2_embedded = self.dropout(pos2_embedded)
 	    left_char_embedded = self.dropout(left_char_embedded)
 	    right_char_embedded = self.dropout(right_char_embedded)
 	    cap_embedded = self.dropout(cap_embedded)
             self.lstm.dropout = self.dropout_p
 
-        embeds = self.tanh(self.embeds2input(torch.cat((word_embedded, pretrain_embedded, pos_embedded, left_char_embedded, right_char_embedded, cap_embedded), 1))).view(len(sentence[0]),1,-1)
+        embeds = self.tanh(self.embeds2input(torch.cat((word_embedded, pretrain_embedded, pos_embedded, pos2_embedded, left_char_embedded, right_char_embedded, cap_embedded), 1))).view(len(sentence[0]),1,-1)
         ##windows
 	begin_padding = self.initPadding()
 	end_padding = self.initPadding()
@@ -194,7 +196,8 @@ def trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=
             sentence_variable.append(Variable(torch.LongTensor(input_words)).cuda())
             sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][2])).cuda())
             sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][3])).cuda())
-            sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][5])).cuda())
+            sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][4])).cuda())
+	    sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][5])).cuda())
 	    sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][6])).cuda())
 	    sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][7])).cuda())
 	    gold_variable = Variable(torch.LongTensor(trn_instances[idx][-1])).cuda()
@@ -202,6 +205,7 @@ def trainIters(trn_instances, dev_instances, tst_instances, bilstm, print_every=
             sentence_variable.append(Variable(torch.LongTensor(input_words)))
             sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][2])))
             sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][3])))
+	    sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][4])))
 	    sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][5])))
 	    sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][6])))
 	    sentence_variable.append(Variable(torch.LongTensor(trn_instances[idx][7])))
@@ -258,13 +262,15 @@ def evaluate(instances, bilstm, dir_path):
             sentence_variable.append(Variable(torch.LongTensor(input_words), volatile=True).cuda())
             sentence_variable.append(Variable(torch.LongTensor(instance[2]), volatile=True).cuda())
             sentence_variable.append(Variable(torch.LongTensor(instance[3]), volatile=True).cuda())
-            sentence_variable.append(Variable(torch.LongTensor(instance[5]), volatile=True).cuda())
+            sentence_variable.append(Variable(torch.LongTensor(instance[4]), volatile=True).cuda())
+	    sentence_variable.append(Variable(torch.LongTensor(instance[5]), volatile=True).cuda())
 	    sentence_variable.append(Variable(torch.LongTensor(instance[6]), volatile=True).cuda())
 	    sentence_variable.append(Variable(torch.LongTensor(instance[7]), volatile=True).cuda())
 	else:
             sentence_variable.append(Variable(torch.LongTensor(input_words), volatile=True))
             sentence_variable.append(Variable(torch.LongTensor(instance[2]), volatile=True))
             sentence_variable.append(Variable(torch.LongTensor(instance[3]), volatile=True))
+	    sentence_variable.append(Variable(torch.LongTensor(instance[4]), volatile=True))
 	    sentence_variable.append(Variable(torch.LongTensor(instance[5]), volatile=True))
 	    sentence_variable.append(Variable(torch.LongTensor(instance[6]), volatile=True))
 	    sentence_variable.append(Variable(torch.LongTensor(instance[7]), volatile=True))
@@ -375,7 +381,7 @@ for item in all_possible_UNK():
     word_to_ix[item] = len(word_to_ix)
     ix_to_word.append(item)
 
-bilstm = EncoderRNN(len(word_to_ix), WORD_EMBEDDING_DIM, len(pretrain_to_ix), PRETRAIN_EMBEDDING_DIM, torch.FloatTensor(pretrain_embeddings), len(pos1_to_ix), POS_EMBEDDING_DIM, len(lchar_to_ix), len(rchar_to_ix), CHAR_EMBEDDING_DIM, len(cap_to_ix), CAP_EMBEDDING_DIM, INPUT_DIM, ENCODER_HIDDEN_DIM, FEAT_DIM, n_layers=2, dropout_p=0.4)
+bilstm = EncoderRNN(len(word_to_ix), WORD_EMBEDDING_DIM, len(pretrain_to_ix), PRETRAIN_EMBEDDING_DIM, torch.FloatTensor(pretrain_embeddings), len(pos1_to_ix),len(pos2_to_ix), POS_EMBEDDING_DIM, len(lchar_to_ix), len(rchar_to_ix), CHAR_EMBEDDING_DIM, len(cap_to_ix), CAP_EMBEDDING_DIM, INPUT_DIM, ENCODER_HIDDEN_DIM, FEAT_DIM, n_layers=2, dropout_p=0.4)
 
 ###########################################################
 # prepare training instance
